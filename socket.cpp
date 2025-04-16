@@ -41,7 +41,8 @@ int main(){
 
     //以下开始向客户端发送信息
     char message[]="hello client,I'm server";
-    write(socket_client,message,sizeof(message));
+    //write(socket_client,message,sizeof(message)); //这个相比于send少了最后一个flag参数，没有那么灵活
+    send(socket_client,message,sizeof(message),0);
     //关闭所使用的套接字
     print_ip_port(socket_server);
     close(socket_server);
