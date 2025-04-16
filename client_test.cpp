@@ -15,7 +15,8 @@ int main(){
     client_addr.sin_port=htons(1234);
     connect(sock,(struct sockaddr*)&client_addr,sizeof(client_addr));
     char message[100];
-    read(sock,message,sizeof(message)-1);
+    // read(sock,message,sizeof(message)-1); //与write是一对的，相比于recv没有那么灵活
+    recv(sock,message,sizeof(message),0); //和send是一对的
     printf("message have receved!\n");
     printf("%s",message);
     close(sock);
