@@ -41,10 +41,21 @@ int main(){
 
     //以下开始向客户端发送信息
     char message[]="hello client,I'm server";
+    while(1){
+    char buf[100]={};
+    int len=recv(socket_client,buf,sizeof(buf),0);
+    if(len<=0) break;
+    if(strncmp(buf,"quit",4)==0) break;
+    buf[len]='\0';
+    printf("client: %s\n",buf);
+    fflush(stdout);
+    fgets(buf,sizeof(buf),stdin);
+    buf[strcspn(buf, "\n")] = '\0';  // 去掉换行符
     //write(socket_client,message,sizeof(message)); //这个相比于send少了最后一个flag参数，没有那么灵活
-    send(socket_client,message,sizeof(message),0);
+    send(socket_client,buf,strlen(buf),0);
     //关闭所使用的套接字
-    print_ip_port(socket_server);
+    }
+    //print_ip_port(socket_server);
     close(socket_server);
     close(socket_client);
     return 0;
@@ -58,9 +69,9 @@ void print_ip_port(int sockfd){
     getsockname(sockfd,(struct sockaddr*)&local_addr,&socklen);
     //通过上面那个函数可获取本地socket的端口号和ip号，得到的结果存在了第二个参数的那个结构体中了
     getpeername(sockfd,(struct sockaddr*)&client_addr,&socklen); //这个是获取远端的ip和端口的
-    std::cout<<"local ip is:"<<inet_ntoa(local_addr.sin_addr)<<std::endl;
+    std::cout<<"local  ip is:"<<inet_ntoa(local_addr.sin_addr)<<std::endl;
     //inet_ntoa将ip转换为人看的懂的字符串，可以认为它与htons是互相逆向转换的
-    std::cout<<"local port is:"<<ntohs(local_addr.sin_port)<<std::endl;
+    std::cout<<"local  port is:"<<ntohs(local_addr.sin_port)<<std::endl;
 
     std::cout<<"client ip is:"<<inet_ntoa(client_addr.sin_addr)<<std::endl;
     std::cout<<"client port is:"<<ntohs(client_addr.sin_port)<<std::endl;
