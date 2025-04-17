@@ -15,10 +15,23 @@ int main(){
     client_addr.sin_port=htons(1234);
     connect(sock,(struct sockaddr*)&client_addr,sizeof(client_addr));
     char message[100];
-    // read(sock,message,sizeof(message)-1); //与write是一对的，相比于recv没有那么灵活
-    recv(sock,message,sizeof(message),0); //和send是一对的
-    printf("message have receved!\n");
-    printf("%s",message);
+    while(1){
+        char buf[100]={};
+        fgets(buf,sizeof(buf),stdin);
+        buf[strcspn(buf, "\n")] = '\0';  // 去掉换行符
+        if(strncmp(buf,"quit",4)==0) break;
+        send(sock,buf,strlen(buf),0);
+        // read(sock,message,sizeof(message)-1); //与write是一对的，相比于recv没有那么灵活
+        int len=recv(sock,buf,sizeof(buf),0); //和send是一对的
+        buf[len]='\0';
+        if(len<0){
+        printf("chat end!\n");
+        break;
+        }else{
+        printf("server: %s\n",buf);
+        fflush(stdout);
+        }
+    }
     close(sock);
     return 0;
 }
