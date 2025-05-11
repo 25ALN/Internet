@@ -150,33 +150,48 @@
 // }
 
 // epoll例子，省略了服务器中具体的操作如bind,listen
+// int main(){
+//     int fd=epoll_create(1); //创建了一个epoll的实例
+//     struct epoll_event ev,events[20];
+//     int server_fd,ready=0,connect_fd; 
+
+//     ev.data.fd=server_fd; //得到该事件的描述符
+//     ev.events=EPOLLIN|EPOLLET; //设置该事件为可读，且切换为边缘触发模式
+
+//     int reval=epoll_ctl(fd,EPOLL_CTL_ADD,server_fd,&ev); 
+//     if(reval<0){
+//         std::cout<<"epoll_ctl fail"<<std::endl;
+//         exit(1);
+//     }
+
+//     while(true){
+//         ready=epoll_wait(fd,events,20,0); //得到已准备好的事件数量
+//         for(int i=0;i<ready;i++){
+//             if(server_fd==events[i].data.fd){ //当检测到有新的连接后，开始注册事件
+//             //调用accept,并且将这个套接字设置为非阻塞模式
+//             // 并且将这个新的事件加入到epoll的监听队列中去
+
+//             ev.data.fd=connect_fd;
+//             ev.events=EPOLLIN|EPOLLET;
+//             epoll_ctl(fd,EPOLL_CTL_ADD,connect_fd,&ev);
+//             }
+//             // 下面就将处理客户端具体的消息内容
+//         }
+//     }
+//     return 0;
+// }
+
 int main(){
-    int fd=epoll_create(1); //创建了一个epoll的实例
-    struct epoll_event ev,events[20];
-    int server_fd,ready=0,connect_fd; 
-
-    ev.data.fd=server_fd; //得到该事件的描述符
-    ev.events=EPOLLIN|EPOLLET; //设置该事件为可读，且切换为边缘触发模式
-
-    int reval=epoll_ctl(fd,EPOLL_CTL_ADD,server_fd,&ev); 
-    if(reval<0){
-        std::cout<<"epoll_ctl fail"<<std::endl;
-        exit(1);
-    }
-
-    while(true){
-        ready=epoll_wait(fd,events,20,0); //得到已准备好的事件数量
-        for(int i=0;i<ready;i++){
-            if(server_fd==events[i].data.fd){ //当检测到有新的连接后，开始注册事件
-            //调用accept,并且将这个套接字设置为非阻塞模式
-            // 并且将这个新的事件加入到epoll的监听队列中去
-
-            ev.data.fd=connect_fd;
-            ev.events=EPOLLIN|EPOLLET;
-            epoll_ctl(fd,EPOLL_CTL_ADD,connect_fd,&ev);
-            }
-            // 下面就将处理客户端具体的消息内容
-        }
-    }
+    struct sockaddr_in ser;
+    int s=socket(AF_INET,SOCK_STREAM,0);
+   // ser.sin_family=AF_INET;
+    ser.sin_port=htons(1234);
+    ser.sin_addr.s_addr=INADDR_ANY;
+    socklen_t len=sizeof(ser);
+    bind(s,(struct sockaddr*)&ser,len);
+    char ip[128];
+    getsockname(s,(struct sockaddr*)&ser,&len);
+    inet_ntop(AF_INET,&ser.sin_addr,ip,len);
+    std::cout<<ip<<std::endl;
     return 0;
 }
