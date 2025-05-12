@@ -1,31 +1,33 @@
-#include <cstdio>
-#include <iostream>
-#include <cstring>
-#include <cstdlib>
-#include <sys/epoll.h>
-#include <thread>
-#include <vector>
-#include <fcntl.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <netinet/in.h> //sockaddr_in, htons() 等
-#include <arpa/inet.h> //inet_pton(), inet_ntoa() 等
+#include "ser.hpp"
 
-const int first_port=21;
-const int mes_travel_port=5100;
-const int maxevents=100;
-const int filebuf_size=4096;
+class client_data{
+    int client_fd;  //控制连接所用的描述符
+    int listen_fd;   //listen描述符
+    int data_fd;    //数据连接所用的描述符
+    bool pasv_flag; //pasv模式是否打开的标志
+    std::string client_ip;
 
-int connect_init();
-void error_report(const std::string &x,int fd); //错误处理
-void ser_work(int fd,std::string ip);
-void deal_new_connect(int ser_fd,int epoll_fd);
-void deal_client_data(int data_fd);
-void deal_pasv_data(int clinet_fd);
+    client_data(int fd,const std::string &ip):client_fd(fd),listen_fd(-1),data_fd(-1),pasv_flag(false)
+    ,client_ip(ip){}
+};
 
-int Recv(int fd,char *buf,int len,int flag);
- 
+//信号处理函数，在处理LIST命令时设置waitpid为非在阻塞的
+void handle(int sig){
+    int status;
+    pid_t pid;
+    while((pid=waitpid(-1,&status,WNOHANG))>0);
+    //-1代表等待任意的子进程，WNOHANG代表非阻塞模式
+}
+
 int main(){
+    struct sigaction act;
+    act.sa_handler=handle;
+    sigemptyset(&act.sa_mask);
+    act.sa_flags=SA_RESTART;
+    if(sigaction(SIGCHLD,&act,NULL)==-1){
+        perror("sigaction");
+        return 1;
+    }
     int readyf=0;
     int server_fd=connect_init();
     int epoll_fd=epoll_create(1);
@@ -58,7 +60,6 @@ int main(){
 void error_report(const std::string &x,int fd){
     std::cout<<x<<" start fail"<<std::endl;
     close(fd);
-    exit(1);
 }
 
 int connect_init(){
@@ -119,8 +120,10 @@ void deal_client_data(int data_fd){
         command.erase(0,command.find_first_not_of(" "));
         command.erase(command.find_last_not_of(" ")+1);
     }
-    if(command.find("PASV")){
+    if(command.find("PASV")!=std::string::npos){
         deal_pasv_data(data_fd);
+    }else if(command.find("LIST")!=std::string::npos){
+        deal_list_data(data_fd);
     }
 }
 
@@ -131,28 +134,85 @@ void deal_pasv_data(int clinet_fd){
     data.sin_port=htons(0); //0代表随机端口
     data.sin_addr.s_addr=htonl(INADDR_ANY);
 
-    int bind_fd=bind(clinet_fd,(struct sockaddr*)&data,sizeof(data));
+    int bind_fd=bind(data_fd,(struct sockaddr*)&data,sizeof(data));
     if(bind_fd<0){
-        error_report("bind",clinet_fd);
+        error_report("bind",data_fd);
     }
     
+    int listen_fd=listen(data_fd,5);
+    if(listen_fd<0){
+        error_report("listen",data_fd);
+    }
+
     struct sockaddr_in local_ip;
     socklen_t ip_len=sizeof(local_ip);
-    getsockname(clinet_fd,(struct sockaddr*)&local_ip.sin_addr,&ip_len);
+    getsockname(data_fd,(struct sockaddr*)&local_ip,&ip_len);
+    uint16_t real_port=ntohs(local_ip.sin_port);
     char ip[128];
     inet_ntop(AF_INET,(struct sockaddr*)&local_ip,ip,sizeof(ip));
 
     std::vector<std::string> call_mes;
+    call_mes.push_back("227 entering passive mode ");
     char *temp=strtok(ip,".");
+    int point=0;
     while(temp!=NULL){
         call_mes.push_back(temp);
         temp=strtok(NULL,".");
+        point++;
     }
     //补充后面两位
-    call_mes.push_back(".");
-    call_mes.push_back((std::to_string)(local_ip.sin_port/256));
-    call_mes.push_back(".");
-    call_mes.push_back((std::to_string)(local_ip.sin_port%256));
+    call_mes.push_back(",");
+    call_mes.push_back((std::to_string)(real_port/256));
+    call_mes.push_back(",");
+    call_mes.push_back((std::to_string)(real_port%256));
+    call_mes.push_back("\r\n");
+    char mesg[258];
+    memset(mesg,'\0',sizeof(mesg));
+    const char *p=",";
+    for(auto x:call_mes){
+        strncat(mesg,x.data(),x.size());
+        if(--point!=0){
+        strncat(mesg,p,1);
+        }
+    }
+    int x=Send(clinet_fd,mesg,strlen(mesg),0);
+
+}
+
+void deal_list_data(int data_fd){
+    pid_t pid=fork();
+    if(pid==-1){
+        perror("fork");
+        return;
+    }else if(pid==0){
+        char dir[128];
+        memset(dir,'\0',sizeof(dir));
+        getcwd(dir,sizeof(dir));
+        std::vector<std::string> order{"ls",dir};
+        std::vector<char *> zx_order;
+        for(auto x:order){
+            zx_order.push_back(const_cast<char *>(x.c_str()));
+            //x.c_ctr()返回值是const char*的，因此需要使用const_cast将const去除
+        }
+        zx_order.push_back(nullptr);
+        execvp(zx_order[0],zx_order.data());
+    }
+    //之后由开局的信号处理函数父进程直接返回
+}
+
+int Send(int fd,char *buf,int len,int flag){
+    int reallen=0;
+    while(reallen<len){
+        int temp=send(fd,buf+reallen,len-reallen,flag);
+        if(temp<0){
+            error_report("send",fd);
+        }else if(temp==0){
+            //数据已全部发送完毕
+            break;
+        }
+        reallen+=temp;
+    }
+    return reallen;
 }
 
 int Recv(int fd,char *buf,int len,int flag){
@@ -162,7 +222,6 @@ int Recv(int fd,char *buf,int len,int flag){
         if(temp<0){
             //数据接收异常
             error_report("recv",fd);
-            exit(1);
         }else if(temp==0){
             //数据已全部接受完毕
             break;
@@ -170,9 +229,4 @@ int Recv(int fd,char *buf,int len,int flag){
         reallen+=temp;
     }
     return reallen;
-}
-
-void ser_work(int fd,std::string ip){
-    std::cout<<"227 entering passive mode "<<std::endl;
-    
 }
