@@ -1,6 +1,7 @@
 #include "ser.hpp"
 
 class client_data{
+    public:
     int client_fd;  //控制连接所用的描述符
     int listen_fd;   //listen描述符
     int data_fd;    //数据连接所用的描述符
@@ -9,6 +10,7 @@ class client_data{
 
     client_data(int fd,const std::string &ip):client_fd(fd),listen_fd(-1),data_fd(-1),pasv_flag(false)
     ,client_ip(ip){}
+
 };
 
 //信号处理函数，在处理LIST命令时设置waitpid为非在阻塞的
@@ -19,16 +21,19 @@ void handle(int sig){
     //-1代表等待任意的子进程，WNOHANG代表非阻塞模式
 }
 
+
+std::unordered_map<int,std::shared_ptr <client_data> > client_message; //利用哈希表来从将信息一一对应起来
+
 int main(){
     struct sigaction act;
     act.sa_handler=handle;
-    sigemptyset(&act.sa_mask);
+    sigemptyset(&act.sa_mask); 
     act.sa_flags=SA_RESTART;
     if(sigaction(SIGCHLD,&act,NULL)==-1){
         perror("sigaction");
         return 1;
     }
-    int readyf=0;
+    int readyf=0; //记录准备好事件的变量
     int server_fd=connect_init();
     int epoll_fd=epoll_create(1);
 
@@ -39,20 +44,33 @@ int main(){
     ev.data.fd=server_fd;
     ev.events=EPOLLIN|EPOLLET;
     epoll_ctl(epoll_fd,EPOLL_CTL_ADD,server_fd,&ev);
-
+    
     while(true){
         std::cout<<"FTP>: "<<std::endl;
         readyf=epoll_wait(epoll_fd,events,maxevents,-1);
-
+        if(errno<0){
+            perror("epoll_wait");
+            break;
+        }
         for(int i=0;i<readyf;i++){
             struct sockaddr_in client_mes;
             if(events[i].data.fd==server_fd){ //处理
                 deal_new_connect(server_fd,epoll_fd);
             }else if(events[i].events&&EPOLLIN){ //接受消息
                 deal_client_data(events[i].data.fd);
+            }else{
+
             }
         }
     }
+
+    for(auto&[fd,client]:client_message){
+        clean_connect(fd);
+    }
+
+    shutdown(server_fd,SHUT_RDWR);
+    close(server_fd);
+    close(epoll_fd);
     return 0;
 }
 
@@ -69,7 +87,11 @@ int connect_init(){
     ser.sin_port=htons(first_port);
     ser.sin_addr.s_addr=INADDR_ANY;
 
+    int contain;
+    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&contain,sizeof(int)); //设置端口复用
+
     int bind_fd=bind(fd,(struct sockaddr*)&ser,sizeof(ser));
+
     if(bind_fd<0){
         error_report("bind",fd);
     }
@@ -78,6 +100,7 @@ int connect_init(){
     if(listen_fd<0){
         error_report("listen",fd);
     }
+    
     return fd;
 }
 
@@ -124,6 +147,8 @@ void deal_client_data(int data_fd){
         deal_pasv_data(data_fd);
     }else if(command.find("LIST")!=std::string::npos){
         deal_list_data(data_fd);
+    }else if(command.find("STOR")){
+        deal_STOR_data(data_fd);
     }
 }
 
@@ -198,6 +223,28 @@ void deal_list_data(int data_fd){
         execvp(zx_order[0],zx_order.data());
     }
     //之后由开局的信号处理函数父进程直接返回
+}
+
+void deal_STOR_data(std::shared_ptr<client_data> client,const std::string filename){
+    int data_fd=accept(client->listen_fd,nullptr,nullptr);
+    FILE *fp=fopen(filename.c_str(),"wb");
+}
+
+void clean_connect(int fd){
+    if(client_message.count(fd)){
+        auto &client=client_message[fd];
+        if(client->listen_fd!=-1){
+            shutdown(client->listen_fd,SHUT_RDWR);  //先调用这个可以防止资源泄漏，数据为还未传输完就close会导致数据一直阻塞下去
+            close(client->listen_fd);
+        }
+        if(client->data_fd!=-1){
+            shutdown(client->data_fd,SHUT_RDWR);
+            close(client->data_fd);
+        }
+        client_message.erase(fd);
+    }
+    shutdown(fd,SHUT_RDWR);
+    close(fd);
 }
 
 int Send(int fd,char *buf,int len,int flag){
