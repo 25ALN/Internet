@@ -28,7 +28,7 @@ int main(){
     struct sigaction act;
     act.sa_handler=handle;
     sigemptyset(&act.sa_mask); 
-    act.sa_flags=SA_RESTART;
+    act.sa_flags=SA_RESTART|SA_NOCLDWAIT;
     if(sigaction(SIGCHLD,&act,NULL)==-1){
         perror("sigaction");
         return 1;
@@ -58,8 +58,8 @@ int main(){
                 deal_new_connect(server_fd,epoll_fd);
             }else if(events[i].events&&EPOLLIN){ //接受消息
                 deal_client_data(events[i].data.fd);
-            }else{
-
+            }else if(events[i].events&&EPOLLERR||EPOLLHUP){
+                clean_connect(server_fd);
             }
         }
     }
@@ -104,12 +104,15 @@ int connect_init(){
     return fd;
 }
 
-
 void deal_new_connect(int ser_fd,int epoll_fd){
     struct sockaddr_in client_mes;
     socklen_t mes_len=sizeof(client_mes);
     while(true){
         int client_fd=accept(ser_fd,(struct sockaddr*)&client_mes,&mes_len);
+        //存储新连接相应的信息
+        std::string ip=inet_ntoa(client_mes.sin_addr);
+        auto client=std::make_shared<client_data>(client_fd,ip);
+        client_message[client_fd]=client;
         if(client_fd<0){
             if(errno==EAGAIN||errno==EWOULDBLOCK){
                 break;
@@ -143,16 +146,19 @@ void deal_client_data(int data_fd){
         command.erase(0,command.find_first_not_of(" "));
         command.erase(command.find_last_not_of(" ")+1);
     }
+    auto client=client_message[data_fd];
     if(command.find("PASV")!=std::string::npos){
         deal_pasv_data(data_fd);
     }else if(command.find("LIST")!=std::string::npos){
         deal_list_data(data_fd);
-    }else if(command.find("STOR")){
-        deal_STOR_data(data_fd);
+    }else if(command.find("STOR")!=std::string::npos){
+        deal_STOR_data(client,command.substr(5)); //从第六个字节开始读取文件名称
+    }else if(command.find("RETR")!=std::string::npos){
+        deal_RETR_data(client,command.substr(5));
     }
 }
 
-void deal_pasv_data(int clinet_fd){
+void deal_pasv_data(int client_fd){
     int data_fd=socket(AF_INET,SOCK_STREAM,0);
     struct sockaddr_in data;
     data.sin_family=AF_INET;
@@ -168,6 +174,8 @@ void deal_pasv_data(int clinet_fd){
     if(listen_fd<0){
         error_report("listen",data_fd);
     }
+    auto client=client_message[client_fd];
+    client->listen_fd=data_fd;
 
     struct sockaddr_in local_ip;
     socklen_t ip_len=sizeof(local_ip);
@@ -200,7 +208,7 @@ void deal_pasv_data(int clinet_fd){
         strncat(mesg,p,1);
         }
     }
-    int x=Send(clinet_fd,mesg,strlen(mesg),0);
+    int x=Send(client_fd,mesg,strlen(mesg),0);
 
 }
 
@@ -225,23 +233,69 @@ void deal_list_data(int data_fd){
     //之后由开局的信号处理函数父进程直接返回
 }
 
-void deal_STOR_data(std::shared_ptr<client_data> client,const std::string filename){
+void deal_RETR_data(std::shared_ptr<client_data> client,const std::string filename){
     int data_fd=accept(client->listen_fd,nullptr,nullptr);
-    FILE *fp=fopen(filename.c_str(),"wb");
+    if(data_fd<0){
+        perror("accept data connection");
+        return;
+    }
+    client->data_fd=data_fd;
+    FILE *fp=fopen(filename.c_str(),"rb");
+    if(fp==nullptr){
+        std::cout<<"file open fail "<<std::endl;
+        close(data_fd);
+        client->data_fd=-1;
+        return;
+    }
+    char buf[4096];
+    memset(buf,'\0',sizeof(buf));
+    while(size_t n=fread(buf,sizeof(buf),1,fp)){ //每次读取sizeof(buf)个元素，大小为1字节，返回读取元素的个数，直到读取的元素个数为1为止
+        send(data_fd,buf,sizeof(buf),0);
+    }
+    fclose(fp);
+    shutdown(client->data_fd,SHUT_RDWR);
+    close(data_fd);
+    client->data_fd=-1;
 }
 
+void deal_STOR_data(std::shared_ptr<client_data> client,const std::string filename){
+    int data_fd=accept(client->listen_fd,nullptr,nullptr);
+    if(data_fd<0){
+        perror("accept data connection");
+        return;
+    }
+    client->data_fd=data_fd;
+    FILE *fp=fopen(filename.c_str(),"wb");
+    if(fp==nullptr){
+        std::cout<<"file open fail "<<std::endl;
+        close(data_fd);
+        client->data_fd=-1;
+        return;
+    }
+    char buf[4096];
+    memset(buf,'\0',sizeof(buf));
+    while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
+        fwrite(buf,1,n,fp);
+    }
+    fclose(fp);
+    shutdown(client->data_fd,SHUT_RDWR);
+    close(client->data_fd);
+    client->data_fd=-1;
+}
 void clean_connect(int fd){
     if(client_message.count(fd)){
         auto &client=client_message[fd];
         if(client->listen_fd!=-1){
             shutdown(client->listen_fd,SHUT_RDWR);  //先调用这个可以防止资源泄漏，数据为还未传输完就close会导致数据一直阻塞下去
             close(client->listen_fd);
+            client->listen_fd=-1;
         }
         if(client->data_fd!=-1){
             shutdown(client->data_fd,SHUT_RDWR);
             close(client->data_fd);
+            client->data_fd=-1;
         }
-        client_message.erase(fd);
+        client_message.erase(fd); //从哈希表中移除
     }
     shutdown(fd,SHUT_RDWR);
     close(fd);
