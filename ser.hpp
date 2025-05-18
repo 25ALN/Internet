@@ -28,8 +28,8 @@ void clean_connect(int fd);
 void deal_new_connect(int ser_fd,int epoll_fd);
 void deal_pasv_data(int clinet_fd);
 void deal_list_data(int data_fd);
-void deal_STOR_data(std::shared_ptr<client_data> client,const std::string filename);
-void deal_RETR_data(std::shared_ptr<client_data> client,const std::string filename);
+void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename);
+void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename);
 void deal_client_data(int data_fd);
 
 int Recv(int fd,char *buf,int len,int flag);
