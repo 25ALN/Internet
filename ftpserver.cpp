@@ -233,7 +233,7 @@ void deal_list_data(int data_fd){
     //之后由开局的信号处理函数父进程直接返回
 }
 
-void deal_RETR_data(std::shared_ptr<client_data> client,const std::string filename){
+void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
     int data_fd=accept(client->listen_fd,nullptr,nullptr);
     if(data_fd<0){
         perror("accept data connection");
@@ -258,7 +258,7 @@ void deal_RETR_data(std::shared_ptr<client_data> client,const std::string filena
     client->data_fd=-1;
 }
 
-void deal_STOR_data(std::shared_ptr<client_data> client,const std::string filename){
+void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename){
     int data_fd=accept(client->listen_fd,nullptr,nullptr);
     if(data_fd<0){
         perror("accept data connection");
