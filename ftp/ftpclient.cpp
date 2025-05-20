@@ -4,65 +4,49 @@
 int main(){
     client_fd=connect_init();
     if(client_fd<0){
-        error_report("connect ",client_fd);
+        error_report("socket",client_fd);
     }
-    int epoll_fd=epoll_create(0);
-    if(epoll_fd<0){
-        std::cout<<"epoll create fail"<<std::endl;
+    start_PASV_mode(client_fd,"PASV\r\n");
+    char repose[1024];
+    memset(repose,'\0',sizeof(repose));
+    int n=Recv(client_fd,repose,sizeof(repose),0);
+    if(n<0){
         clean_connect(client_fd);
         return 0;
     }
-    struct epoll_event ev,events[maxt];
-    ev.data.fd=client_fd;
-    ev.events=EPOLLET|EPOLLIN;
-    if(epoll_ctl(epoll_fd,EPOLL_CTL_ADD,client_fd,&ev)<0){
-        std::cout<<"epoll_ctl fail"<<std::endl;
-        clean_connect(client_fd);
-        return 0;
+    std::cout<<"server PASV reponse:"<<repose<<std::endl;
+    std::string cmd(repose,n);
+    if(cmd.find("227 entering passive mode")!=std::string::npos){
+        get_ip_port(cmd);
+    }else{
+        error_report("PASV mode",client_fd);
     }
-
     while(true){
-        int ready=epoll_wait(epoll_fd,events,maxt,-1);
-        if(ready<0&&errno==EINTR){ 
-            if(errno==EINTR){     //信号被中断了，连接重试
-            continue;
-            }
-            break;
-        }    
-        for(int i=0;i<ready;i++){
-            if(events[i].events&&(EPOLLERR||EPOLLHUP)){
-                clean_connect(events[i].data.fd);
-            }else if(events[i].events&&EPOLLIN){
-                if(events[i].data.fd==client_fd){
-                    deal_new_connect(events[i].data.fd,epoll_fd);
-                }else{
-                    deal_new_command(events[i].data.fd);
-                }
-            }else if(events[i].events&&EPOLLOUT){ //处理剩余可写的数据
-                if(ser_msave.find(client_fd)!=ser_msave.end()){ //检查是否还存在可写数据存在
-                    ser_mes &remain=ser_msave[client_fd];
-                    int sent=Send(epoll_fd,client_fd,remain.buf.data()+remain.real_len,remain.buf.size()-remain.real_len,0);
-                    if(sent>0){
-                        remain.real_len+=sent;
-                        if(remain.real_len>=remain.buf.size()){ //数据已确定发送完毕，可以将添加的EPOLLOUT
-                            struct epoll_event ev;
-                            ev.data.fd=client_fd;
-                            ev.events=EPOLLET|EPOLLIN;
-                            epoll_ctl(epoll_fd,EPOLL_CTL_MOD,client_fd,&ev);
-                            ser_msave.erase(client_fd);
-                        }
-                    }else if(sent<0&&errno!=EAGAIN){ //传输异常
-                        clean_connect(client_fd);
-                    }
-                }
-            }
-        }
+        char message[1024];
+        memset(message,'\0',sizeof(message));
+        std::cin.getline(message,sizeof(message));
+        deal_willsend_message(client_fd,message);
     }
     
     clean_connect(client_fd);
     return 0;
 }
-
+void start_PASV_mode(int fd,std::string first_m){
+    Send(fd,first_m.c_str(),first_m.size(),0);
+}
+void deal_willsend_message(int fd,char m[1024]){
+    std::string mes=(std::string)m;
+    if(mes.find("PASV")!=std::string::npos){
+        std::thread(deal_send_message,fd,mes);
+    }else if(mes.find("STOR")!=std::string::npos){
+        std::thread(deal_up_file,fd,mes.substr(5,mes.size()-5));
+    }else if(mes.find("RETR")!=std::string::npos){
+        std::thread(deal_get_file,fd,mes.substr(5,mes.size()-5));
+    }
+}
+void deal_send_message(int fd,std::string m){
+    Send(fd,m.c_str(),m.size(),0);
+}
 void error_report(const std::string &x,int fd){
     std::cout<<x<<" start fail"<<std::endl;
     close(fd);
@@ -86,6 +70,7 @@ int connect_init(){
     if(connect_fd<0){
         error_report("connect",fd);
     }
+    
     return fd;
 }
 
@@ -95,62 +80,55 @@ void deal_new_connect(int fd,int epfd){
     if(getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&len)<0||error!=0){ //检查连接是否成功建立
         error_report("getsockopt",fd);
     }
-    std::cout<<"success connect server!"<<std::endl;
-    std::string first_message="hello server!";
-    Send(epfd,fd,first_message.c_str(),first_message.size(),0);
+    std::cout<<"success connect server! start PASV mode."<<std::endl;
+    send_command(fd,"PASV\r\n");
 }
 
-void deal_new_command(int fd){
-    char buf[4096];
-    memset(buf,'\0',sizeof(buf));
-    int n=Recv(fd,buf,sizeof(buf),0);
-    if(n<=0){
-        clean_connect(fd);
-        return;
-    }
-    std::string ser_mesage(buf,n);
-    std::cout<<"server reponse: "<<ser_mesage<<std::endl;
-    if(ser_mesage.find("227 entering passive mode")!=std::string::npos){ //解析ip地址与端口号
-        std::string ip;
-        int cnt=0;
-        ser_mesage.erase(0,27);
-        for(auto i:ser_mesage){
-            if(i!=','){
-                ip+=i;
-                if(cnt==3){
-                    break;
-                }
-            }else{
-                ip+='.';
-                cnt++;
-            }
+
+void get_ip_port(std::string ser_mesage){
+    std::string ip;
+    int cnt=0;
+    int start=ser_mesage.find("(");
+    int end=ser_mesage.find(")");
+    std::string mes=ser_mesage.substr(start+1,end-start-1);
+    int douhao=mes.find(",");
+    while(cnt!=4){
+        for(int i=0;i<douhao;i++){
+            ip+=mes[i];
         }
-        std::string p1,p2;
-        ser_mesage.erase(0,ip.size()+1);
-        for(auto j:ser_mesage){
-            if(j!=','&&cnt!=4){
-                p1+=j;
+        if(cnt!=3){
+        ip+='.';
+        mes.erase(0,douhao+1);
+        douhao=mes.find(",");
+        cnt++;
+        }
+    std::string p1,p2;
+    for(auto j:mes){
+        if(j!=','&&cnt!=4){
+            p1+=j;
             }else if(j!=')'&&j!=','){
-                p2+=j;
-            }else if(j==','){
-                cnt++;
-            }
+            p2+=j;
+        }else if(j==','){
+            cnt++;
         }
-        IP=(char *)(ip.c_str());
-        data_port=std::stoi(p1)*256+std::stoi(p2);
+    }
+    IP=ip;
+    data_port=std::stoi(p2)*256+std::stoi(p1);
     }
 }
 
 void deal_get_file(std::string filename,int fd){
     int data_fd=socket(AF_INET,SOCK_STREAM,0);
+    int flag=fcntl(data_fd,F_GETFL,0);
+    fcntl(data_fd,F_SETFL,flag|O_NONBLOCK);
     if(data_fd<0){
         error_report("socket",data_fd);
     }
     struct sockaddr_in filedata;
     filedata.sin_family=AF_INET;
     filedata.sin_port=htons(data_port);
-    filedata.sin_addr.s_addr=inet_addr(IP);
-    int m=connect(fd,(struct sockaddr*)&filedata,sizeof(filedata));
+    filedata.sin_addr.s_addr=inet_addr(IP.c_str());
+    int m=connect(data_fd,(struct sockaddr*)&filedata,sizeof(filedata));
     if(m<0){
         std::cout<<"connect fail"<<std::endl;
         return;
@@ -172,7 +150,17 @@ void deal_get_file(std::string filename,int fd){
 }
 
 void deal_up_file(std::string filename,int fd){
-    int connnect_fd=connect(fd,nullptr,0);
+    int data_fd=socket(AF_INET,SOCK_STREAM,0);
+    if(data_fd<0){
+        error_report("socket",data_fd);
+    }
+    int flag=fcntl(data_fd,F_GETFL,0);
+    fcntl(data_fd,F_SETFL,flag|O_NONBLOCK);
+    struct sockaddr_in data_message;
+    data_message.sin_family=AF_INET;
+    data_message.sin_port=htons(data_port);
+    data_message.sin_addr.s_addr=inet_addr(IP.c_str());
+    int connnect_fd=connect(fd,(struct sockaddr*)&data_message,sizeof(data_message));
     if(connnect_fd<0){
         std::cout<<"connect fail"<<std::endl;
         return;
@@ -198,9 +186,6 @@ int Recv(int fd,char *buf,int len,int flags){
     while(reallen<len){
         int temp=recv(fd,buf+reallen,len-reallen,flags);
         if(temp<0){
-            if(errno==EAGAIN||errno==EWOULDBLOCK){
-                break; //此时说明当前无连接
-            }
             error_report("recv",fd);
         }else if(temp==0){
             break;
@@ -210,27 +195,11 @@ int Recv(int fd,char *buf,int len,int flags){
     return reallen;
 }
 
-int Send(int epoll_fd,int fd,const char *buf,int len,int flags){
+int Send(int fd,const char *buf,int len,int flags){
     int reallen=0;
     while(reallen<len){
         int temp=send(fd,buf+reallen,len-reallen,flags);
         if(temp<0){
-            if(errno==EAGAIN||errno==EWOULDBLOCK){ //此时连接中断了，消息传了一半或没有传，需重新使用epoll监听事件
-                ser_mes message;
-                message.fd=fd;
-                message.buf.assign(buf+temp,buf+len); //保存好未发送的数据
-                message.real_len=0;
-                ser_msave[fd]=message; //用定义好的哈希表保存对应的套接字所对应的信息
-
-                //开始利用epoll重新进行监听
-                struct epoll_event ev;
-                ev.data.fd=message.fd;
-                ev.events=EPOLLET||EPOLLIN||EPOLLOUT;
-                if(epoll_ctl(epoll_fd,EPOLL_CTL_MOD,fd,&ev)<0){
-                    error_report("epoll_ctl ",fd);
-                }
-                return reallen;
-            }
             error_report("send",fd);
         }else if(temp==0){
             //数据已全部发送完毕

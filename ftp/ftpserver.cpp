@@ -266,6 +266,7 @@ void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename){
     close(client->data_fd);
     client->data_fd=-1;
 }
+
 void clean_connect(int fd){
     if(client_message.count(fd)){
         auto &client=client_message[fd];

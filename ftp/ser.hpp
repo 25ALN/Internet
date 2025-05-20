@@ -5,6 +5,7 @@
 #include <memory>
 #include <unordered_map>
 #include <csignal>
+#include <sstream>
 #include <sys/epoll.h>
 #include <thread>
 #include <vector>
