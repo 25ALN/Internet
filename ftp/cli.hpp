@@ -14,16 +14,8 @@
 #include <sys/wait.h>
 #include <netinet/in.h> //sockaddr_in, htons() µÈ
 #include <arpa/inet.h> //inet_pton(), inet_ntoa() µÈ
-
-struct ser_mes{
-    FILE *fp=nullptr;
-    std::string filename;
-    int data_fd=-1;
-    bool uporl=false;
-    std::vector<char> buf;
-    size_t real_len;
-};
-std::unordered_map<int,ser_mes> ser_msave;
+#include <algorithm>
+#include <sstream>
 
 const int first_port=2100;
 int data_port=-1;
@@ -34,7 +26,6 @@ int client_fd=-1;
 void error_report(const std::string &x,int fd);
 int connect_init();
 void start_PASV_mode(int fd,std::string first_m);
-void deal_new_connect(int fd,int epfd);
 void get_ip_port(std::string ser_mesage);
 void deal_willsend_message(int fd,char m[1024]);
 void deal_send_message(int fd,std::string m);

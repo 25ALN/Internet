@@ -22,10 +22,10 @@ class client_data{
     int listen_fd;   //listen描述符
     int data_fd;    //数据连接所用的描述符
     bool pasv_flag; //pasv模式是否打开的标志
-    std::string client_ip;
+    std::string server_ip;
 
     client_data(int fd,const std::string &ip):client_fd(fd),listen_fd(-1),data_fd(-1),pasv_flag(false)
-    ,client_ip(ip){}
+    ,server_ip(ip){}
 
 };
 

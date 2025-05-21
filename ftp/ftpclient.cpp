@@ -14,9 +14,10 @@ int main(){
         clean_connect(client_fd);
         return 0;
     }
-    std::cout<<"server PASV reponse:"<<repose<<std::endl;
+    std::cout<<"server PASV reponse:"<<repose;
     std::string cmd(repose,n);
-    if(cmd.find("227 entering passive mode")!=std::string::npos){
+    std::cout<<"cmd="<<cmd<<std::endl;
+    if(cmd.find("227 Entering Passive Mode")!=std::string::npos){
         get_ip_port(cmd);
     }else{
         error_report("PASV mode",client_fd);
@@ -32,19 +33,24 @@ int main(){
     return 0;
 }
 void start_PASV_mode(int fd,std::string first_m){
+    if(!first_m.empty())
     Send(fd,first_m.c_str(),first_m.size(),0);
 }
 void deal_willsend_message(int fd,char m[1024]){
     std::string mes=(std::string)m;
     if(mes.find("PASV")!=std::string::npos){
-        std::thread(deal_send_message,fd,mes);
+        std::thread x(deal_send_message,fd,mes);
+        x.join();
     }else if(mes.find("STOR")!=std::string::npos){
-        std::thread(deal_up_file,fd,mes.substr(5,mes.size()-5));
+        std::thread x(deal_up_file,mes.substr(5,mes.size()-5),fd);
+        x.join();
     }else if(mes.find("RETR")!=std::string::npos){
-        std::thread(deal_get_file,fd,mes.substr(5,mes.size()-5));
+        std::thread x(deal_get_file,mes.substr(5,mes.size()-5),fd);
+        x.join();
     }
 }
 void deal_send_message(int fd,std::string m){
+    if(!m.empty())
     Send(fd,m.c_str(),m.size(),0);
 }
 void error_report(const std::string &x,int fd){
@@ -61,29 +67,18 @@ int connect_init(){
     struct sockaddr_in client_mess;
     client_mess.sin_family=AF_INET;
     client_mess.sin_port=htons(first_port);
-    client_mess.sin_addr.s_addr=inet_addr(INADDR_ANY);
+    client_mess.sin_addr.s_addr=htonl(INADDR_ANY);
     int flags=fcntl(fd,F_GETFL,0);
     if(fcntl(fd,F_SETFL,flags|O_NONBLOCK)<0){
         error_report("fcntl",fd);
     }
     int connect_fd=connect(fd,(struct sockaddr*)&client_mess,sizeof(client_mess));
-    if(connect_fd<0){
+    if(connect_fd<0&&errno!=EINPROGRESS){
         error_report("connect",fd);
     }
     
     return fd;
 }
-
-void deal_new_connect(int fd,int epfd){
-    int error=0;
-    socklen_t len=sizeof(error);
-    if(getsockopt(fd,SOL_SOCKET,SO_ERROR,&error,&len)<0||error!=0){ //检查连接是否成功建立
-        error_report("getsockopt",fd);
-    }
-    std::cout<<"success connect server! start PASV mode."<<std::endl;
-    send_command(fd,"PASV\r\n");
-}
-
 
 void get_ip_port(std::string ser_mesage){
     std::string ip;
@@ -114,6 +109,7 @@ void get_ip_port(std::string ser_mesage){
     }
     IP=ip;
     data_port=std::stoi(p2)*256+std::stoi(p1);
+    std::cout<<"IP="<<IP<<" port="<<data_port<<std::endl;
     }
 }
 
@@ -127,10 +123,33 @@ void deal_get_file(std::string filename,int fd){
     struct sockaddr_in filedata;
     filedata.sin_family=AF_INET;
     filedata.sin_port=htons(data_port);
-    filedata.sin_addr.s_addr=inet_addr(IP.c_str());
+    if(IP.empty()){
+        return;
+    }
+    if(inet_pton(AF_INET,IP.c_str(),&filedata.sin_addr)<0){
+        std::cout<<"inet_pton fail"<<std::endl;
+        return;
+    }
     int m=connect(data_fd,(struct sockaddr*)&filedata,sizeof(filedata));
-    if(m<0){
+    if(m<0&&errno!=EINPROGRESS){
         std::cout<<"connect fail"<<std::endl;
+        return;
+    }
+
+    // 使用select等待连接完成
+    fd_set set;
+    FD_ZERO(&set);
+    FD_SET(data_fd, &set);
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    if(select(data_fd+1, NULL, &set, NULL, &timeout) <= 0){
+        std::cout<<"Connection timeout"<<std::endl;
+        close(data_fd);
+        return;
+    }
+
+    if(filename.empty()){
         return;
     }
     FILE *fp=fopen(filename.c_str(),"wb");
@@ -159,10 +178,19 @@ void deal_up_file(std::string filename,int fd){
     struct sockaddr_in data_message;
     data_message.sin_family=AF_INET;
     data_message.sin_port=htons(data_port);
-    data_message.sin_addr.s_addr=inet_addr(IP.c_str());
+    if(IP.empty()){
+        return;
+    }
+    if(inet_pton(AF_INET,IP.c_str(),&data_message.sin_addr)<0){
+        std::cout<<"inet_pton fail"<<std::endl;
+        return;
+    }
     int connnect_fd=connect(fd,(struct sockaddr*)&data_message,sizeof(data_message));
-    if(connnect_fd<0){
+    if(connnect_fd<0&&errno!=EINPROGRESS){
         std::cout<<"connect fail"<<std::endl;
+        return;
+    }
+    if(filename.empty()){
         return;
     }
     FILE *fp=fopen(filename.c_str(),"rb");
@@ -186,7 +214,11 @@ int Recv(int fd,char *buf,int len,int flags){
     while(reallen<len){
         int temp=recv(fd,buf+reallen,len-reallen,flags);
         if(temp<0){
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return reallen;
+            }
             error_report("recv",fd);
+            return -1;
         }else if(temp==0){
             break;
         }
