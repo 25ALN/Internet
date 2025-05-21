@@ -35,7 +35,6 @@ int main(){
     epoll_ctl(epoll_fd,EPOLL_CTL_ADD,server_fd,&ev);
     
     while(true){
-        std::cout<<"FTP>: "<<std::endl;
         readyf=epoll_wait(epoll_fd,events,maxevents,-1);
         if(errno<0){
             perror("epoll_wait");
@@ -45,9 +44,9 @@ int main(){
             struct sockaddr_in client_mes;
             if(events[i].data.fd==server_fd){ //处理
                 deal_new_connect(server_fd,epoll_fd);
-            }else if(events[i].events&&EPOLLIN){ //接受消息
+            }else if(events[i].events&EPOLLIN){ //接受消息
                 deal_client_data(events[i].data.fd);
-            }else if(events[i].events&&EPOLLERR||EPOLLHUP){
+            }else if(events[i].events&(EPOLLERR|EPOLLHUP)){
                 clean_connect(server_fd);
             }
         }
@@ -71,13 +70,12 @@ void error_report(const std::string &x,int fd){
 
 int connect_init(){
     int fd=socket(AF_INET,SOCK_STREAM,0);
+    int contain;
+    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&contain,sizeof(int)); //设置端口复用
     struct sockaddr_in ser;
     ser.sin_family=AF_INET;
     ser.sin_port=htons(first_port);
-    ser.sin_addr.s_addr=INADDR_ANY;
-
-    int contain;
-    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&contain,sizeof(int)); //设置端口复用
+    ser.sin_addr.s_addr=htonl(INADDR_ANY);
 
     int bind_fd=bind(fd,(struct sockaddr*)&ser,sizeof(ser));
 
@@ -85,7 +83,7 @@ int connect_init(){
         error_report("bind",fd);
     }
 
-    int listen_fd=listen(fd,5);
+    int listen_fd=listen(fd,10);
     if(listen_fd<0){
         error_report("listen",fd);
     }
@@ -95,21 +93,24 @@ int connect_init(){
 
 void deal_new_connect(int ser_fd,int epoll_fd){
     struct sockaddr_in client_mes;
-    socklen_t mes_len=sizeof(client_mes);
-    while(true){
-        int client_fd=accept(ser_fd,(struct sockaddr*)&client_mes,&mes_len);
-        //存储新连接相应的信息
-        std::string ip=inet_ntoa(client_mes.sin_addr);
-        auto client=std::make_shared<client_data>(client_fd,ip);
-        client_message[client_fd]=client;
-        if(client_fd<0){
-            if(errno==EAGAIN||errno==EWOULDBLOCK){
-                break;
-            }else{
-                error_report("accept",client_fd);
-            }
+    socklen_t mes_len = sizeof(client_mes);
+    while (true) {
+        int client_fd = accept(ser_fd, (struct sockaddr*)&client_mes, &mes_len);
+        if (client_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+            else error_report("accept", client_fd);
         }
 
+        // 获取服务端本地IP地址
+        struct sockaddr_in server_side_addr;
+        socklen_t addr_len = sizeof(server_side_addr);
+        getsockname(client_fd, (struct sockaddr*)&server_side_addr, &addr_len);
+        std::string server_ip = inet_ntoa(server_side_addr.sin_addr);
+
+        std::string client_ip = inet_ntoa(client_mes.sin_addr);
+        auto client = std::make_shared<client_data>(client_fd, client_ip);
+        client->server_ip = server_ip; 
+        client_message[client_fd] = client;
         int flags=fcntl(client_fd,F_SETFL,O_NONBLOCK);
         fcntl(client_fd,F_SETFL,flags|O_NONBLOCK);
         struct epoll_event cev;
@@ -148,51 +149,56 @@ void deal_client_data(int data_fd){
 }
 
 void deal_pasv_data(int client_fd){
-    int data_fd=socket(AF_INET,SOCK_STREAM,0);
-    struct sockaddr_in data;
-    data.sin_family=AF_INET;
-    data.sin_port=htons(0); //0代表随机端口
-    data.sin_addr.s_addr=htonl(INADDR_ANY);
+    
+    auto client = client_message[client_fd];
+    std::string server_ip = client->server_ip; // 使用保存的服务端IP
 
-    int bind_fd=bind(data_fd,(struct sockaddr*)&data,sizeof(data));
-    if(bind_fd<0){
-        error_report("bind",data_fd);
+    // 创建监听套接字
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (listen_fd < 0) {
+        perror("socket");
+        return;
     }
     
-    int listen_fd=listen(data_fd,5);
-    if(listen_fd<0){
-        error_report("listen",data_fd);
+    // 设置端口复用
+    int opt = 1;
+    setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(mes_travel_port); // 使用预设端口
+    inet_pton(AF_INET, server_ip.c_str(), &addr.sin_addr);
+    
+    if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        perror("bind");
+        close(listen_fd);
+        return;
     }
-    auto client=client_message[client_fd];
-    client->listen_fd=data_fd;
-
-    struct sockaddr_in local_ip;
-    socklen_t ip_len=sizeof(local_ip);
-    getsockname(data_fd,(struct sockaddr*)&local_ip,&ip_len);
-    uint16_t real_port=ntohs(local_ip.sin_port);
-    char ip[128];
-    inet_ntop(AF_INET,&local_ip.sin_addr,ip,sizeof(ip));
+    
+    if (listen(listen_fd, 1) < 0) {
+        perror("listen");
+        close(listen_fd);
+        return;
+    }
+    client->listen_fd = listen_fd;
 
     std::vector<std::string> call_mes;
-
-    char ip_fg[128];
-    memset(ip_fg,'\0',sizeof(ip_fg));
-    strncpy(ip_fg,ip,strlen(ip));
-    char *temp=strtok(ip_fg,".");
-    while(temp!=nullptr){
-        call_mes.push_back(temp);
-        temp=strtok(nullptr,".");
+    std::istringstream iss(server_ip);
+    std::string part;
+    while (getline(iss, part, '.')) {
+        call_mes.push_back(part);
     }
     //补充后面两位
     std::ostringstream bc;
-    bc<<"227 entering passive mode (";
+    bc<<"227 Entering Passive Mode (";
     for(int i=0;i<call_mes.size();i++){
-        if(i<call_mes.size()-1){
-            call_mes.push_back(",");
-        }
+        bc << call_mes[i];
+        if (i != call_mes.size() - 1) bc << ",";
     }
-    bc<<","<<real_port/256<<","<<real_port%256<<")\r\n";
+    bc<<","<<(mes_travel_port/256)<<","<<(mes_travel_port%256)<<")\r\n";
     std::string mesg=bc.str();
+    std::cout<<mesg<<std::endl;
     int x=Send(client_fd,const_cast<char *>(mesg.c_str()),strlen(mesg.c_str()),0);
 }
 
@@ -202,9 +208,7 @@ void deal_list_data(int data_fd){
         perror("fork");
         return;
     }else if(pid==0){
-        char dir[128];
-        memset(dir,'\0',sizeof(dir));
-        getcwd(dir,sizeof(dir));
+        char dir[]="/home/aln/桌面/Internet/ftp/";
         std::vector<std::string> order{"ls",dir};
         std::vector<char *> zx_order;
         for(auto x:order){
@@ -307,6 +311,9 @@ int Recv(int fd,char *buf,int len,int flag){
         int temp=recv(fd,buf+reallen,len-reallen,flag);
         if(temp<0){
             //数据接收异常
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                return reallen; // 非阻塞模式下数据未就绪，直接返回已接收长度
+            }
             error_report("recv",fd);
         }else if(temp==0){
             //数据已全部接受完毕
