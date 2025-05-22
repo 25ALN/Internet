@@ -1,27 +1,25 @@
 #include "ser.hpp"
 
-
-
 //信号处理函数，在处理LIST命令时设置waitpid为非在阻塞的
-void handle(int sig){
-    int status;
-    pid_t pid;
-    while((pid=waitpid(-1,&status,WNOHANG))>0);
-    //-1代表等待任意的子进程，WNOHANG代表非阻塞模式
-}
+// void handle(int sig){
+//     int status;
+//     pid_t pid;
+//     while((pid=waitpid(-1,&status,WNOHANG))>0);
+//     //-1代表等待任意的子进程，WNOHANG代表非阻塞模式
+// }
 
 
 std::unordered_map<int,std::shared_ptr <client_data> > client_message; //利用哈希表来从将信息一一对应起来
 
 int main(){
-    struct sigaction act;
-    act.sa_handler=handle;
-    sigemptyset(&act.sa_mask); 
-    act.sa_flags=SA_RESTART|SA_NOCLDWAIT;
-    if(sigaction(SIGCHLD,&act,NULL)==-1){
-        perror("sigaction");
-        return 1;
-    }
+    // struct sigaction act;
+    // act.sa_handler=handle;
+    // sigemptyset(&act.sa_mask); 
+    // act.sa_flags=SA_RESTART|SA_NOCLDWAIT;
+    // if(sigaction(SIGCHLD,&act,NULL)==-1){
+    //     perror("sigaction");
+    //     return 1;
+    // }
     int readyf=0; //记录准备好事件的变量
     int server_fd=connect_init();
     int epoll_fd=epoll_create(1);
@@ -36,18 +34,21 @@ int main(){
     
     while(true){
         readyf=epoll_wait(epoll_fd,events,maxevents,-1);
-        if(errno<0){
+        if(readyf<0){
             perror("epoll_wait");
             break;
         }
         for(int i=0;i<readyf;i++){
             struct sockaddr_in client_mes;
             if(events[i].data.fd==server_fd){ //处理
+                std::cout<<"1"<<std::endl;
                 deal_new_connect(server_fd,epoll_fd);
             }else if(events[i].events&EPOLLIN){ //接受消息
+                std::cout<<"2"<<std::endl;
                 deal_client_data(events[i].data.fd);
             }else if(events[i].events&(EPOLLERR|EPOLLHUP)){
-                clean_connect(server_fd);
+                std::cout<<"3"<<std::endl;
+                clean_connect(events[i].data.fd);
             }
         }
     }
@@ -111,7 +112,7 @@ void deal_new_connect(int ser_fd,int epoll_fd){
         auto client = std::make_shared<client_data>(client_fd, client_ip);
         client->server_ip = server_ip; 
         client_message[client_fd] = client;
-        int flags=fcntl(client_fd,F_SETFL,O_NONBLOCK);
+        int flags=fcntl(client_fd,F_GETFL,O_NONBLOCK);
         fcntl(client_fd,F_SETFL,flags|O_NONBLOCK);
         struct epoll_event cev;
         
@@ -123,7 +124,7 @@ void deal_new_connect(int ser_fd,int epoll_fd){
 }
 
 void deal_client_data(int data_fd){
-    char ensure[128];
+    char ensure[1024];
     memset(ensure,'\0',sizeof(ensure));
     int n=Recv(data_fd,ensure,sizeof(ensure),0);
     if(n<0){
@@ -152,8 +153,8 @@ void deal_pasv_data(int client_fd){
     
     auto client = client_message[client_fd];
     std::string server_ip = client->server_ip; // 使用保存的服务端IP
-
-    // 创建监听套接字
+    std::cout<<"server_ip="<<server_ip<<std::endl;
+    //创建监听套接字
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
         perror("socket");
@@ -167,21 +168,25 @@ void deal_pasv_data(int client_fd){
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(mes_travel_port); // 使用预设端口
+    addr.sin_port = htons(0); // 随机分配一个端口
     inet_pton(AF_INET, server_ip.c_str(), &addr.sin_addr);
-    
+
     if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
         perror("bind");
         close(listen_fd);
         return;
     }
-    
+    socklen_t addrlen=sizeof(addr);
+    getsockname(listen_fd,(struct sockaddr*)&addr,&addrlen);
+    mes_travel_port=ntohs(addr.sin_port);
+    std::cout<<"travel port="<<mes_travel_port<<std::endl;
     if (listen(listen_fd, 1) < 0) {
         perror("listen");
         close(listen_fd);
         return;
     }
     client->listen_fd = listen_fd;
+    
 
     std::vector<std::string> call_mes;
     std::istringstream iss(server_ip);
@@ -200,6 +205,11 @@ void deal_pasv_data(int client_fd){
     std::string mesg=bc.str();
     std::cout<<mesg<<std::endl;
     int x=Send(client_fd,const_cast<char *>(mesg.c_str()),strlen(mesg.c_str()),0);
+    std::cout<<"x="<<x<<std::endl;
+    if(x<=0){
+        error_report("send",client_fd);
+        return;
+    }
 }
 
 void deal_list_data(int data_fd){
@@ -235,11 +245,18 @@ void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
         client->data_fd=-1;
         return;
     }
-    char buf[4096];
-    memset(buf,'\0',sizeof(buf));
-    while(size_t n=fread(buf,sizeof(buf),1,fp)){ //每次读取sizeof(buf)个元素，大小为1字节，返回读取元素的个数，直到读取的元素个数为1为止
-        send(data_fd,buf,sizeof(buf),0);
+    while (true) {
+        char buf[4096];
+        ssize_t n = fread(buf, 1, sizeof(buf), fp);
+        if (n <= 0) break;
+        ssize_t sent = send(data_fd, buf, n, 0);
+        if (sent < 0) break;
     }
+    // char buf[4096];
+    // memset(buf,'\0',sizeof(buf));
+    // while(size_t n=fread(buf,sizeof(buf),1,fp)){ //每次读取sizeof(buf)个元素，大小为1字节，返回读取元素的个数，直到读取的元素个数为1为止
+    //     send(data_fd,buf,n,0);
+    // }
     fclose(fp);
     shutdown(client->data_fd,SHUT_RDWR);
     close(data_fd);

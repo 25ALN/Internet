@@ -30,7 +30,7 @@ class client_data{
 };
 
 const int first_port=2100;
-const int mes_travel_port=5100;
+int mes_travel_port=5100;
 const int maxevents=100;
 const int filebuf_size=4096;
 
