@@ -9,8 +9,10 @@ int main(){
     start_PASV_mode(client_fd,"PASV\r\n");
     char repose[1024];
     memset(repose,'\0',sizeof(repose));
+    std::cout<<"ready recv"<<std::endl;
     int n=Recv(client_fd,repose,sizeof(repose),0);
-    if(n<0){
+    std::cout<<"n="<<n<<std::endl;
+    if(n<=0){
         clean_connect(client_fd);
         return 0;
     }
@@ -18,6 +20,7 @@ int main(){
     std::string cmd(repose,n);
     std::cout<<"cmd="<<cmd<<std::endl;
     if(cmd.find("227 Entering Passive Mode")!=std::string::npos){
+        std::cout<<"begin fxi ip and port"<<std::endl;
         get_ip_port(cmd);
     }else{
         error_report("PASV mode",client_fd);
@@ -26,6 +29,7 @@ int main(){
         char message[1024];
         memset(message,'\0',sizeof(message));
         std::cin.getline(message,sizeof(message));
+        std::cout<<"message:"<<message<<std::endl;
         deal_willsend_message(client_fd,message);
     }
     
@@ -33,20 +37,25 @@ int main(){
     return 0;
 }
 void start_PASV_mode(int fd,std::string first_m){
-    if(!first_m.empty())
-    Send(fd,first_m.c_str(),first_m.size(),0);
+    if(!first_m.empty()){
+    int n=Send(fd,first_m.c_str(),first_m.size(),0);
+    std::cout<<"n="<<n<<std::endl;
+    }
 }
 void deal_willsend_message(int fd,char m[1024]){
     std::string mes=(std::string)m;
     if(mes.find("PASV")!=std::string::npos){
         std::thread x(deal_send_message,fd,mes);
-        x.join();
+        x.detach();
     }else if(mes.find("STOR")!=std::string::npos){
         std::thread x(deal_up_file,mes.substr(5,mes.size()-5),fd);
-        x.join();
+        x.detach();
     }else if(mes.find("RETR")!=std::string::npos){
         std::thread x(deal_get_file,mes.substr(5,mes.size()-5),fd);
-        x.join();
+        x.detach();
+    }else{
+        std::cout<<"not find this command"<<std::endl;
+        return;
     }
 }
 void deal_send_message(int fd,std::string m){
@@ -87,6 +96,7 @@ void get_ip_port(std::string ser_mesage){
     int end=ser_mesage.find(")");
     std::string mes=ser_mesage.substr(start+1,end-start-1);
     int douhao=mes.find(",");
+    std::string p1,p2;
     while(cnt!=4){
         for(int i=0;i<douhao;i++){
             ip+=mes[i];
@@ -95,9 +105,11 @@ void get_ip_port(std::string ser_mesage){
         ip+='.';
         mes.erase(0,douhao+1);
         douhao=mes.find(",");
-        cnt++;
         }
-    std::string p1,p2;
+        cnt++;
+        
+    }
+    mes.erase(0,douhao+1);
     for(auto j:mes){
         if(j!=','&&cnt!=4){
             p1+=j;
@@ -110,7 +122,6 @@ void get_ip_port(std::string ser_mesage){
     IP=ip;
     data_port=std::stoi(p2)*256+std::stoi(p1);
     std::cout<<"IP="<<IP<<" port="<<data_port<<std::endl;
-    }
 }
 
 void deal_get_file(std::string filename,int fd){
@@ -156,15 +167,24 @@ void deal_get_file(std::string filename,int fd){
     if(fp==nullptr){
         std::cout<<"file open fail "<<std::endl;
         shutdown(fd,SHUT_RDWR);
-        close(fd);
+        close(data_fd);
         fclose(fp);
         return;
     }
-    char buf[4096];
-    memset(buf,'\0',sizeof(buf));
-    while(size_t n=recv(fd,buf,sizeof(buf),0)){
-        fwrite(buf,1,n,fp);
+    // char buf[4096];
+    // memset(buf,'\0',sizeof(buf));
+    while (true) {
+        char buf[4096];
+        ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
+        if (n < 0) {
+            if (errno == EAGAIN) continue; // 非阻塞模式下重试
+            else break;
+        } else if (n == 0) break; // 连接关闭
+        fwrite(buf, 1, n, fp);
     }
+    // while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
+    //     fwrite(buf,1,n,fp);
+    // }
     fclose(fp);
 }
 
@@ -185,7 +205,7 @@ void deal_up_file(std::string filename,int fd){
         std::cout<<"inet_pton fail"<<std::endl;
         return;
     }
-    int connnect_fd=connect(fd,(struct sockaddr*)&data_message,sizeof(data_message));
+    int connnect_fd=connect(data_fd,(struct sockaddr*)&data_message,sizeof(data_message));
     if(connnect_fd<0&&errno!=EINPROGRESS){
         std::cout<<"connect fail"<<std::endl;
         return;
@@ -202,7 +222,7 @@ void deal_up_file(std::string filename,int fd){
     char buf[4096];
     memset(buf,'\0',sizeof(buf));
     while(size_t n=fread(buf,sizeof(buf),1,fp)){
-        send(fd,buf,sizeof(buf),0);
+        send(data_fd,buf,n,0);
     }
     shutdown(fd,SHUT_RDWR);
     close(fd);
@@ -211,11 +231,24 @@ void deal_up_file(std::string filename,int fd){
 
 int Recv(int fd,char *buf,int len,int flags){
     int reallen=0;
+    fd_set set;
+    struct timeval timeout;
     while(reallen<len){
         int temp=recv(fd,buf+reallen,len-reallen,flags);
         if(temp<0){
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                return reallen;
+                 // 数据未就绪，等待可读事件
+                 FD_ZERO(&set);
+                 FD_SET(fd, &set);
+                 timeout.tv_sec = 5;
+                 timeout.tv_usec = 0;
+                 if (select(fd + 1, &set, NULL, NULL, &timeout) <= 0) {
+                     std::cout << "Recv timeout" << std::endl;
+                     return reallen;
+                 }
+                 continue;  // 重新尝试 recv
+                // std::cout<<"no ready"<<std::endl;
+                // return reallen;
             }
             error_report("recv",fd);
             return -1;

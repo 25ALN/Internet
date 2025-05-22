@@ -12,8 +12,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #include <sys/wait.h>
-#include <netinet/in.h> //sockaddr_in, htons() µÈ
-#include <arpa/inet.h> //inet_pton(), inet_ntoa() µÈ
+#include <netinet/in.h> //sockaddr_in, htons() ?
+#include <arpa/inet.h> //inet_pton(), inet_ntoa() ?
 #include <algorithm>
 #include <sstream>
 
