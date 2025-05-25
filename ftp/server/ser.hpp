@@ -26,7 +26,6 @@ class client_data{
 
     client_data(int fd,const std::string &ip):client_fd(fd),listen_fd(-1),data_fd(-1),pasv_flag(false)
     ,server_ip(ip){}
-
 };
 
 const int first_port=2100;

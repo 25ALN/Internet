@@ -147,7 +147,7 @@ void deal_get_file(std::string filename,int fd){
         return;
     }
 
-    // Ê¹ÓÃselectµÈ´ıÁ¬½ÓÍê³É
+    // ä½¿ç”¨selectç­‰å¾…è¿æ¥å®Œæˆ
     fd_set set;
     FD_ZERO(&set);
     FD_SET(data_fd, &set);
@@ -173,15 +173,17 @@ void deal_get_file(std::string filename,int fd){
     }
     // char buf[4096];
     // memset(buf,'\0',sizeof(buf));
+    std::cout<<"å¼€å§‹æ¥æ”¶æ–‡ä»¶"<<std::endl;
     while (true) {
         char buf[4096];
         ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
-        if (n < 0) {
-            if (errno == EAGAIN) continue; // ·Ç×èÈûÄ£Ê½ÏÂÖØÊÔ
+        if (n <= 0) {
+            if (errno == EAGAIN) continue; // éé˜»å¡æ¨¡å¼ä¸‹é‡è¯•
             else break;
-        } else if (n == 0) break; // Á¬½Ó¹Ø±Õ
+        } else if (n == 0) break; // è¿æ¥å…³é—­
         fwrite(buf, 1, n, fp);
     }
+    std::cout<<"æ–‡ä»¶æ¥æ”¶å®Œæ¯•"<<std::endl;
     // while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
     //     fwrite(buf,1,n,fp);
     // }
@@ -213,20 +215,33 @@ void deal_up_file(std::string filename,int fd){
     if(filename.empty()){
         return;
     }
-    FILE *fp=fopen(filename.c_str(),"rb");
+    char c[1024];
+    getcwd(c,sizeof(c));
+    std::string x=(std::string)c+'/'+filename;
+    const char *name=x.c_str();
+    FILE *fp=fopen(name,"rb");
     if(fp==nullptr){
-        std::cout<<"file open fail "<<std::endl;
-        fclose(fp);
+        perror("fopen fail");
+        close(data_fd);
         return;
     }
     char buf[4096];
     memset(buf,'\0',sizeof(buf));
-    while(size_t n=fread(buf,sizeof(buf),1,fp)){
-        send(data_fd,buf,n,0);
+    std::cout<<"begin send file"<<std::endl;
+    size_t bytes_read;
+    while ((bytes_read = fread(buf, 1, sizeof(buf), fp)) > 0) {
+        ssize_t sent = send(data_fd, buf, bytes_read, 0);
+        if (sent < 0) {
+            perror("send error");
+            break;
+        }
     }
-    shutdown(fd,SHUT_RDWR);
-    close(fd);
+    std::cout<<"success send file!"<<std::endl;
+    shutdown(data_fd,SHUT_RDWR);
+    close(data_fd);
+    if(fp!=nullptr){
     fclose(fp);
+    }
 }
 
 int Recv(int fd,char *buf,int len,int flags){
@@ -237,7 +252,7 @@ int Recv(int fd,char *buf,int len,int flags){
         int temp=recv(fd,buf+reallen,len-reallen,flags);
         if(temp<0){
             if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                 // Êı¾İÎ´¾ÍĞ÷£¬µÈ´ı¿É¶ÁÊÂ¼ş
+                 // æ•°æ®æœªå°±ç»ªï¼Œç­‰å¾…å¯è¯»äº‹ä»¶
                  FD_ZERO(&set);
                  FD_SET(fd, &set);
                  timeout.tv_sec = 5;
@@ -246,7 +261,7 @@ int Recv(int fd,char *buf,int len,int flags){
                      std::cout << "Recv timeout" << std::endl;
                      return reallen;
                  }
-                 continue;  // ÖØĞÂ³¢ÊÔ recv
+                 continue;  // é‡æ–°å°è¯• recv
                 // std::cout<<"no ready"<<std::endl;
                 // return reallen;
             }
@@ -267,7 +282,7 @@ int Send(int fd,const char *buf,int len,int flags){
         if(temp<0){
             error_report("send",fd);
         }else if(temp==0){
-            //Êı¾İÒÑÈ«²¿·¢ËÍÍê±Ï
+            //æ•°æ®å·²å…¨éƒ¨å‘é€å®Œæ¯•
             return reallen;
         }
         reallen+=temp;
