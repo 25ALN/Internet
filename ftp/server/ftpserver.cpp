@@ -1,26 +1,9 @@
 #include "ser.hpp"
 
-//ĞÅºÅ´¦Àíº¯Êı£¬ÔÚ´¦ÀíLISTÃüÁîÊ±ÉèÖÃwaitpidÎª·ÇÔÚ×èÈûµÄ
-// void handle(int sig){
-//     int status;
-//     pid_t pid;
-//     while((pid=waitpid(-1,&status,WNOHANG))>0);
-//     //-1´ú±íµÈ´ıÈÎÒâµÄ×Ó½ø³Ì£¬WNOHANG´ú±í·Ç×èÈûÄ£Ê½
-// }
-
-
-std::unordered_map<int,std::shared_ptr <client_data> > client_message; //ÀûÓÃ¹şÏ£±íÀ´´Ó½«ĞÅÏ¢Ò»Ò»¶ÔÓ¦ÆğÀ´
+std::unordered_map<int,std::shared_ptr <client_data> > client_message; //åˆ©ç”¨å“ˆå¸Œè¡¨æ¥ä»å°†ä¿¡æ¯ä¸€ä¸€å¯¹åº”èµ·æ¥
 
 int main(){
-    // struct sigaction act;
-    // act.sa_handler=handle;
-    // sigemptyset(&act.sa_mask); 
-    // act.sa_flags=SA_RESTART|SA_NOCLDWAIT;
-    // if(sigaction(SIGCHLD,&act,NULL)==-1){
-    //     perror("sigaction");
-    //     return 1;
-    // }
-    int readyf=0; //¼ÇÂ¼×¼±¸ºÃÊÂ¼şµÄ±äÁ¿
+    int readyf=0; //è®°å½•å‡†å¤‡å¥½äº‹ä»¶çš„å˜é‡
     int server_fd=connect_init();
     int epoll_fd=epoll_create(1);
 
@@ -40,10 +23,10 @@ int main(){
         }
         for(int i=0;i<readyf;i++){
             struct sockaddr_in client_mes;
-            if(events[i].data.fd==server_fd){ //´¦Àí
+            if(events[i].data.fd==server_fd){ //å¤„ç†
                 std::cout<<"1"<<std::endl;
                 deal_new_connect(server_fd,epoll_fd);
-            }else if(events[i].events&EPOLLIN){ //½ÓÊÜÏûÏ¢
+            }else if(events[i].events&EPOLLIN){ //æ¥å—æ¶ˆæ¯
                 std::cout<<"2"<<std::endl;
                 deal_client_data(events[i].data.fd);
             }else if(events[i].events&(EPOLLERR|EPOLLHUP)){
@@ -72,7 +55,7 @@ void error_report(const std::string &x,int fd){
 int connect_init(){
     int fd=socket(AF_INET,SOCK_STREAM,0);
     int contain;
-    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&contain,sizeof(int)); //ÉèÖÃ¶Ë¿Ú¸´ÓÃ
+    setsockopt(fd,SOL_SOCKET,SO_REUSEADDR,&contain,sizeof(int)); //è®¾ç½®ç«¯å£å¤ç”¨
     struct sockaddr_in ser;
     ser.sin_family=AF_INET;
     ser.sin_port=htons(first_port);
@@ -102,7 +85,7 @@ void deal_new_connect(int ser_fd,int epoll_fd){
             else error_report("accept", client_fd);
         }
 
-        // »ñÈ¡·şÎñ¶Ë±¾µØIPµØÖ·
+        // è·å–æœåŠ¡ç«¯æœ¬åœ°IPåœ°å€
         struct sockaddr_in server_side_addr;
         socklen_t addr_len = sizeof(server_side_addr);
         getsockname(client_fd, (struct sockaddr*)&server_side_addr, &addr_len);
@@ -127,13 +110,18 @@ void deal_client_data(int data_fd){
     char ensure[1024];
     memset(ensure,'\0',sizeof(ensure));
     int n=Recv(data_fd,ensure,sizeof(ensure),0);
+    std::cout<<"client command:"<<ensure<<std::endl;
     if(n<0){
         std::cout<<"recv error"<<std::endl;
         close(data_fd);
         return;
     }
-    std::string command(ensure,n);
-    if(!command.empty()){ //½«Ê×Î²µÄ¿Õ¸ñÈ¥³ı
+    std::string command(ensure, n);
+    size_t crlf_pos = command.find("\r\n");
+    if (crlf_pos != std::string::npos) {
+        command = command.substr(0, crlf_pos); // å»é™¤å°¾éƒ¨ \r\n
+    }
+    if(!command.empty()){ //å°†é¦–å°¾çš„ç©ºæ ¼å»é™¤
         command.erase(0,command.find_first_not_of(" "));
         command.erase(command.find_last_not_of(" ")+1);
     }
@@ -141,34 +129,40 @@ void deal_client_data(int data_fd){
     if(command.find("PASV")!=std::string::npos){
         deal_pasv_data(data_fd);
     }else if(command.find("LIST")!=std::string::npos){
+        std::cout<<"begin LIST"<<std::endl;
         deal_list_data(data_fd);
     }else if(command.find("STOR")!=std::string::npos){
-        deal_STOR_data(client,command.substr(5)); //´ÓµÚÁù¸ö×Ö½Ú¿ªÊ¼¶ÁÈ¡ÎÄ¼şÃû³Æ
+        std::cout<<"begin STOR"<<std::endl;
+        deal_STOR_data(client,command.substr(5)); //ä»ç¬¬å…­ä¸ªå­—èŠ‚å¼€å§‹è¯»å–æ–‡ä»¶åç§°
     }else if(command.find("RETR")!=std::string::npos){
+        std::cout<<"begin RETR"<<std::endl;
         deal_RETR_data(client,command.substr(5));
+    }else{
+        std::cout<<"æ²¡æœ‰æ‰¾åˆ°ç›¸å…³å‘½ä»¤"<<std::endl;
+        return;
     }
 }
 
 void deal_pasv_data(int client_fd){
     
     auto client = client_message[client_fd];
-    std::string server_ip = client->server_ip; // Ê¹ÓÃ±£´æµÄ·şÎñ¶ËIP
+    std::string server_ip = client->server_ip; // ä½¿ç”¨ä¿å­˜çš„æœåŠ¡ç«¯IP
     std::cout<<"server_ip="<<server_ip<<std::endl;
-    //´´½¨¼àÌıÌ×½Ó×Ö
+    //åˆ›å»ºç›‘å¬å¥—æ¥å­—
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
         perror("socket");
         return;
     }
     
-    // ÉèÖÃ¶Ë¿Ú¸´ÓÃ
+    // è®¾ç½®ç«¯å£å¤ç”¨
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
     
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(0); // Ëæ»ú·ÖÅäÒ»¸ö¶Ë¿Ú
+    addr.sin_port = htons(0); // éšæœºåˆ†é…ä¸€ä¸ªç«¯å£
     inet_pton(AF_INET, server_ip.c_str(), &addr.sin_addr);
 
     if (bind(listen_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
@@ -194,7 +188,7 @@ void deal_pasv_data(int client_fd){
     while (getline(iss, part, '.')) {
         call_mes.push_back(part);
     }
-    //²¹³äºóÃæÁ½Î»
+    //è¡¥å……åé¢ä¸¤ä½
     std::ostringstream bc;
     bc<<"227 Entering Passive Mode (";
     for(int i=0;i<call_mes.size();i++){
@@ -205,7 +199,6 @@ void deal_pasv_data(int client_fd){
     std::string mesg=bc.str();
     std::cout<<mesg<<std::endl;
     int x=Send(client_fd,const_cast<char *>(mesg.c_str()),strlen(mesg.c_str()),0);
-    std::cout<<"x="<<x<<std::endl;
     if(x<=0){
         error_report("send",client_fd);
         return;
@@ -218,17 +211,17 @@ void deal_list_data(int data_fd){
         perror("fork");
         return;
     }else if(pid==0){
-        char dir[]="/home/aln/×ÀÃæ/Internet/ftp/";
+        char dir[]="/home/aln/æ¡Œé¢/Internet/ftp/";
         std::vector<std::string> order{"ls",dir};
         std::vector<char *> zx_order;
         for(auto x:order){
             zx_order.push_back(const_cast<char *>(x.c_str()));
-            //x.c_ctr()·µ»ØÖµÊÇconst char*µÄ£¬Òò´ËĞèÒªÊ¹ÓÃconst_cast½«constÈ¥³ı
+            //x.c_ctr()è¿”å›å€¼æ˜¯const char*çš„ï¼Œå› æ­¤éœ€è¦ä½¿ç”¨const_castå°†constå»é™¤
         }
         zx_order.push_back(nullptr);
         execvp(zx_order[0],zx_order.data());
     }
-    //Ö®ºóÓÉ¿ª¾ÖµÄĞÅºÅ´¦Àíº¯Êı¸¸½ø³ÌÖ±½Ó·µ»Ø
+    //ä¹‹åç”±å¼€å±€çš„ä¿¡å·å¤„ç†å‡½æ•°çˆ¶è¿›ç¨‹ç›´æ¥è¿”å›
 }
 
 void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
@@ -245,6 +238,7 @@ void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
         client->data_fd=-1;
         return;
     }
+    std::cout<<"å¼€å§‹ä¸Šä¼ æ–‡ä»¶"<<std::endl;
     while (true) {
         char buf[4096];
         ssize_t n = fread(buf, 1, sizeof(buf), fp);
@@ -252,9 +246,10 @@ void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
         ssize_t sent = send(data_fd, buf, n, 0);
         if (sent < 0) break;
     }
+    std::cout<<"æ–‡ä»¶ä¸Šä¼ å®Œæ¯•"<<std::endl;
     // char buf[4096];
     // memset(buf,'\0',sizeof(buf));
-    // while(size_t n=fread(buf,sizeof(buf),1,fp)){ //Ã¿´Î¶ÁÈ¡sizeof(buf)¸öÔªËØ£¬´óĞ¡Îª1×Ö½Ú£¬·µ»Ø¶ÁÈ¡ÔªËØµÄ¸öÊı£¬Ö±µ½¶ÁÈ¡µÄÔªËØ¸öÊıÎª1ÎªÖ¹
+    // while(size_t n=fread(buf,sizeof(buf),1,fp)){ //æ¯æ¬¡è¯»å–sizeof(buf)ä¸ªå…ƒç´ ï¼Œå¤§å°ä¸º1å­—èŠ‚ï¼Œè¿”å›è¯»å–å…ƒç´ çš„ä¸ªæ•°ï¼Œç›´åˆ°è¯»å–çš„å…ƒç´ ä¸ªæ•°ä¸º1ä¸ºæ­¢
     //     send(data_fd,buf,n,0);
     // }
     fclose(fp);
@@ -264,7 +259,15 @@ void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
 }
 
 void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename){
-    int data_fd=accept(client->listen_fd,nullptr,nullptr);
+    struct sockaddr_in clmes;
+    clmes.sin_family=AF_INET;
+    clmes.sin_port=htons(mes_travel_port);
+    if(inet_pton(AF_INET,client->server_ip.c_str(),&clmes.sin_addr)<0){
+        std::cout<<"inet_pton fail"<<std::endl;
+        return;
+    }
+    socklen_t len=sizeof(clmes);
+    int data_fd=accept(client->listen_fd,(struct sockaddr*)&clmes,&len);
     if(data_fd<0){
         perror("accept data connection");
         return;
@@ -279,9 +282,27 @@ void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename){
     }
     char buf[4096];
     memset(buf,'\0',sizeof(buf));
-    while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
-        fwrite(buf,1,n,fp);
+    std::cout<<"å¼€å§‹æ¥æ”¶æ–‡ä»¶"<<std::endl;
+    ssize_t total = 0;
+    
+    while (true) {
+        ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
+        if (n > 0) {
+            fwrite(buf, 1, n, fp);
+            total += n;
+        } else if (n == 0) { // è¿æ¥æ­£å¸¸å…³é—­
+            break;
+        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            continue; // éé˜»å¡æ¨¡å¼ä¸‹æ•°æ®æœªå°±ç»ªï¼Œç»§ç»­ç­‰å¾…
+        } else { // å…¶ä»–é”™è¯¯
+            perror("recv error");
+            break;
+        }
     }
+    // while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
+    //     fwrite(buf,1,n,fp);
+    // }
+    std::cout<<"æ–‡ä»¶æ¥æ”¶å®Œæ¯•,å¤§å°ä¸º"<<total<<"å­—èŠ‚"<<std::endl;
     fclose(fp);
     shutdown(client->data_fd,SHUT_RDWR);
     close(client->data_fd);
@@ -292,7 +313,7 @@ void clean_connect(int fd){
     if(client_message.count(fd)){
         auto &client=client_message[fd];
         if(client->listen_fd!=-1){
-            shutdown(client->listen_fd,SHUT_RDWR);  //ÏÈµ÷ÓÃÕâ¸ö¿ÉÒÔ·ÀÖ¹×ÊÔ´Ğ¹Â©£¬Êı¾İÎª»¹Î´´«ÊäÍê¾Íclose»áµ¼ÖÂÊı¾İÒ»Ö±×èÈûÏÂÈ¥
+            shutdown(client->listen_fd,SHUT_RDWR);  //å…ˆè°ƒç”¨è¿™ä¸ªå¯ä»¥é˜²æ­¢èµ„æºæ³„æ¼ï¼Œæ•°æ®ä¸ºè¿˜æœªä¼ è¾“å®Œå°±closeä¼šå¯¼è‡´æ•°æ®ä¸€ç›´é˜»å¡ä¸‹å»
             close(client->listen_fd);
             client->listen_fd=-1;
         }
@@ -301,7 +322,7 @@ void clean_connect(int fd){
             close(client->data_fd);
             client->data_fd=-1;
         }
-        client_message.erase(fd); //´Ó¹şÏ£±íÖĞÒÆ³ı
+        client_message.erase(fd); //ä»å“ˆå¸Œè¡¨ä¸­ç§»é™¤
     }
     shutdown(fd,SHUT_RDWR);
     close(fd);
@@ -314,7 +335,7 @@ int Send(int fd,char *buf,int len,int flag){
         if(temp<0){
             error_report("send",fd);
         }else if(temp==0){
-            //Êı¾İÒÑÈ«²¿·¢ËÍÍê±Ï
+            //æ•°æ®å·²å…¨éƒ¨å‘é€å®Œæ¯•
             break;
         }
         reallen+=temp;
@@ -325,18 +346,31 @@ int Send(int fd,char *buf,int len,int flag){
 int Recv(int fd,char *buf,int len,int flag){
     int reallen=0;
     while(reallen<len){
-        int temp=recv(fd,buf+reallen,len-reallen,flag);
-        if(temp<0){
-            //Êı¾İ½ÓÊÕÒì³£
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                return reallen; // ·Ç×èÈûÄ£Ê½ÏÂÊı¾İÎ´¾ÍĞ÷£¬Ö±½Ó·µ»ØÒÑ½ÓÊÕ³¤¶È
-            }
-            error_report("recv",fd);
-        }else if(temp==0){
-            //Êı¾İÒÑÈ«²¿½ÓÊÜÍê±Ï
+        int temp = recv(fd, buf + reallen, len - reallen, flag);
+        if (temp > 0) {
+            reallen += temp;
+        } else if (temp == 0) { // è¿æ¥å…³é—­
             break;
+        } else {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                break; // éé˜»å¡æ¨¡å¼ä¸‹æ— æ›´å¤šæ•°æ®ï¼Œé€€å‡ºå¾ªç¯
+            } else {
+                error_report("recv", fd);
+                return -1;
+            }
         }
-        reallen+=temp;
+        // int temp=recv(fd,buf+reallen,len-reallen,flag);
+        // if(temp<0){
+        //     //æ•°æ®æ¥æ”¶å¼‚å¸¸
+        //     if (errno == EAGAIN || errno == EWOULDBLOCK) {
+        //         return reallen; // éé˜»å¡æ¨¡å¼ä¸‹æ•°æ®æœªå°±ç»ªï¼Œç›´æ¥è¿”å›å·²æ¥æ”¶é•¿åº¦
+        //     }
+        //     error_report("recv",fd);
+        // }else if(temp==0){
+        //     //æ•°æ®å·²å…¨éƒ¨æ¥å—å®Œæ¯•
+        //     break;
+        // }
+        // reallen+=temp;
     }
     return reallen;
 }
