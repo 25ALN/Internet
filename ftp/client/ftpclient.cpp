@@ -29,7 +29,6 @@ int main(){
         char message[1024];
         memset(message,'\0',sizeof(message));
         std::cin.getline(message,sizeof(message));
-        std::cout<<"message:"<<message<<std::endl;
         deal_willsend_message(client_fd,message);
     }
     
@@ -47,20 +46,42 @@ void deal_willsend_message(int fd,char m[1024]){
     if(mes.find("PASV")!=std::string::npos){
         std::thread x(deal_send_message,fd,mes);
         x.detach();
+    }else if(mes.find("LIST")!=std::string::npos){
+        std::thread x([fd,mes]() {
+            deal_list_data(fd); // 新增函数，用于接收列表数据
+        });
+        x.detach();
     }else if(mes.find("STOR")!=std::string::npos){
-        std::thread x(deal_up_file,mes.substr(5,mes.size()-5),fd);
+        std::string stor_command = "STOR " + mes.substr(5) + "\r\n";
+        Send(fd, stor_command.c_str(), stor_command.size(), 0);
+
+        // 启动线程处理文件传输
+        std::thread x([fd, mes]() {
+            deal_up_file(mes.substr(5), fd);
+        });
         x.detach();
     }else if(mes.find("RETR")!=std::string::npos){
-        std::thread x(deal_get_file,mes.substr(5,mes.size()-5),fd);
+        std::thread x([fd, mes]() {
+            deal_get_file(mes.substr(5), fd);
+        });
+        //std::thread x(deal_get_file,mes.substr(5,mes.size()-5),fd);
         x.detach();
+    }else if(mes.find("quit")!=std::string::npos){
+        std::cout<<"client quit connect"<<std::endl;
+        std::thread x(deal_send_message,fd,mes);
+        x.detach();
+        sleep(1);
+        clean_connect(fd);
+        exit(0);
     }else{
         std::cout<<"not find this command"<<std::endl;
         return;
     }
 }
 void deal_send_message(int fd,std::string m){
-    if(!m.empty())
+    if(!m.empty()){
     Send(fd,m.c_str(),m.size(),0);
+    }
 }
 void error_report(const std::string &x,int fd){
     std::cout<<x<<" start fail"<<std::endl;
@@ -184,50 +205,57 @@ void deal_get_file(std::string filename,int fd){
         fwrite(buf, 1, n, fp);
     }
     std::cout<<"文件接收完毕"<<std::endl;
-    // while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
-    //     fwrite(buf,1,n,fp);
-    // }
     fclose(fp);
 }
 
-void deal_up_file(std::string filename,int fd){
-    int data_fd=socket(AF_INET,SOCK_STREAM,0);
-    if(data_fd<0){
-        error_report("socket",data_fd);
-    }
-    int flag=fcntl(data_fd,F_GETFL,0);
-    fcntl(data_fd,F_SETFL,flag|O_NONBLOCK);
-    struct sockaddr_in data_message;
-    data_message.sin_family=AF_INET;
-    data_message.sin_port=htons(data_port);
-    if(IP.empty()){
+void deal_up_file(std::string filename, int control_fd) {
+    // 1. 创建数据套接字并连接到服务端数据端口
+    int data_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (data_fd < 0) {
+        error_report("socket", data_fd);
         return;
     }
-    if(inet_pton(AF_INET,IP.c_str(),&data_message.sin_addr)<0){
-        std::cout<<"inet_pton fail"<<std::endl;
-        return;
-    }
-    int connnect_fd=connect(data_fd,(struct sockaddr*)&data_message,sizeof(data_message));
-    if(connnect_fd<0&&errno!=EINPROGRESS){
-        std::cout<<"connect fail"<<std::endl;
-        return;
-    }
-    if(filename.empty()){
-        return;
-    }
-    char c[1024];
-    getcwd(c,sizeof(c));
-    std::string x=(std::string)c+'/'+filename;
-    const char *name=x.c_str();
-    FILE *fp=fopen(name,"rb");
-    if(fp==nullptr){
-        perror("fopen fail");
+
+    // 设置为非阻塞模式
+    int flags = fcntl(data_fd, F_GETFL, 0);
+    fcntl(data_fd, F_SETFL, flags | O_NONBLOCK);
+
+    struct sockaddr_in data_addr;
+    data_addr.sin_family = AF_INET;
+    data_addr.sin_port = htons(data_port);
+    inet_pton(AF_INET, IP.c_str(), &data_addr.sin_addr);
+
+    // 发起非阻塞连接
+    int connect_ret = connect(data_fd, (struct sockaddr*)&data_addr, sizeof(data_addr));
+    if (connect_ret < 0 && errno != EINPROGRESS) {
+        error_report("connect", data_fd);
         close(data_fd);
         return;
     }
+
+    // 使用select等待连接完成
+    fd_set writefds;
+    FD_ZERO(&writefds);
+    FD_SET(data_fd, &writefds);
+    struct timeval timeout;
+    timeout.tv_sec = 5;
+    timeout.tv_usec = 0;
+    int sel_ret = select(data_fd + 1, NULL, &writefds, NULL, &timeout);
+    if (sel_ret <= 0) {
+        std::cout << "Data connection timeout" << std::endl;
+        close(data_fd);
+        return;
+    }
+
+    // 2. 发送文件数据
+    FILE* fp = fopen(filename.c_str(), "rb");
+    if (!fp) {
+        perror("fopen failed");
+        close(data_fd);
+        return;
+    }
+
     char buf[4096];
-    memset(buf,'\0',sizeof(buf));
-    std::cout<<"begin send file"<<std::endl;
     size_t bytes_read;
     while ((bytes_read = fread(buf, 1, sizeof(buf), fp)) > 0) {
         ssize_t sent = send(data_fd, buf, bytes_read, 0);
@@ -236,12 +264,19 @@ void deal_up_file(std::string filename,int fd){
             break;
         }
     }
-    std::cout<<"success send file!"<<std::endl;
-    shutdown(data_fd,SHUT_RDWR);
+
+    // 3. 关闭数据连接
+    shutdown(data_fd, SHUT_WR);
     close(data_fd);
-    if(fp!=nullptr){
-    fclose(fp);
+
+    char response[1024];
+    int n = Recv(control_fd, response, sizeof(response), 0);
+    if (n <= 0) {
+        std::cout << "Failed to receive final response" << std::endl;
+    } else {
+        std::cout << "Server response: " << std::string(response, n) << std::endl;
     }
+    fclose(fp);
 }
 
 int Recv(int fd,char *buf,int len,int flags){
@@ -255,15 +290,13 @@ int Recv(int fd,char *buf,int len,int flags){
                  // 数据未就绪，等待可读事件
                  FD_ZERO(&set);
                  FD_SET(fd, &set);
-                 timeout.tv_sec = 5;
+                 timeout.tv_sec =10;
                  timeout.tv_usec = 0;
                  if (select(fd + 1, &set, NULL, NULL, &timeout) <= 0) {
                      std::cout << "Recv timeout" << std::endl;
                      return reallen;
                  }
                  continue;  // 重新尝试 recv
-                // std::cout<<"no ready"<<std::endl;
-                // return reallen;
             }
             error_report("recv",fd);
             return -1;

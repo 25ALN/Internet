@@ -10,7 +10,13 @@
 #include <thread>
 #include <vector>
 #include <fcntl.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <sys/socket.h>
+#include <grp.h>
+#include <pwd.h>
+#include <time.h>
+#include <iomanip> 
 #include <unistd.h>
 #include <sys/wait.h>
 #include <netinet/in.h> //sockaddr_in, htons() µÈ
