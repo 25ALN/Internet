@@ -137,7 +137,12 @@ void deal_client_data(int data_fd){
     }else if(command.find("RETR")!=std::string::npos){
         std::cout<<"begin RETR"<<std::endl;
         deal_RETR_data(client,command.substr(5));
-    }else{
+    }else if(command.find("quit")!=std::string::npos){
+        std::cout<<"server quit connect"<<std::endl;
+        clean_connect(data_fd);
+        exit(0);
+    }
+    else{
         std::cout<<"没有找到相关命令"<<std::endl;
         return;
     }
@@ -154,7 +159,8 @@ void deal_pasv_data(int client_fd){
         perror("socket");
         return;
     }
-    
+    int flags=fcntl(listen_fd,F_GETFL,0);
+    fcntl(listen_fd,F_SETFL,flags|O_NONBLOCK); 
     // 设置端口复用
     int opt = 1;
     setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
@@ -206,26 +212,84 @@ void deal_pasv_data(int client_fd){
 }
 
 void deal_list_data(int data_fd){
-    pid_t pid=fork();
-    if(pid==-1){
-        perror("fork");
+    std::string listmes;
+    std::ostringstream oss;
+    struct store
+{
+    char name[1024];
+    long time;
+};
+    const char *dir_path = "/home/aln/桌面/Internet/ftp/server/";
+    DIR *dirr = opendir(dir_path);
+    if (dirr == NULL)
+    {
+        perror("fail open dir");
         return;
-    }else if(pid==0){
-        char dir[]="/home/aln/桌面/Internet/ftp/";
-        std::vector<std::string> order{"ls",dir};
-        std::vector<char *> zx_order;
-        for(auto x:order){
-            zx_order.push_back(const_cast<char *>(x.c_str()));
-            //x.c_ctr()返回值是const char*的，因此需要使用const_cast将const去除
-        }
-        zx_order.push_back(nullptr);
-        execvp(zx_order[0],zx_order.data());
     }
-    //之后由开局的信号处理函数父进程直接返回
+    char path[10240];
+    char rwx[11];
+    int j = 0, filenum = 0;
+    struct dirent *r;
+    struct stat filestat[1024];
+    struct store s[1024];
+    while ((r = readdir(dirr)) != NULL)
+    {
+        if (r->d_name[0] == '.')
+        {
+            continue;
+        }
+        strcpy(path, dir_path);
+        strncat(path, r->d_name, strlen(r->d_name));
+        if (stat(path, &filestat[filenum]) == -1)
+        {
+            perror("files fail");
+            continue;
+        }
+        strcpy(s[filenum].name, r->d_name);
+        s[filenum].time = filestat[filenum].st_mtime;
+        filenum++;
+    }
+    for(int i=0;i<filenum;i++){
+        mode_t file = filestat[i].st_mode;
+        if (S_ISDIR(file))
+            rwx[0] = 'd';
+        else if (S_ISLNK(file))
+            rwx[0] = 'l';
+        else
+            rwx[0] = '-';
+        rwx[1] = (file & S_IRUSR) ? 'r' : '-';
+        rwx[2] = (file & S_IWUSR) ? 'w' : '-';
+        rwx[3] = (file & S_IXUSR) ? 'x' : '-';
+        rwx[4] = (file & S_IRGRP) ? 'r' : '-';
+        rwx[5] = (file & S_IWGRP) ? 'w' : '-';
+        rwx[6] = (file & S_IXGRP) ? 'x' : '-';
+        rwx[7] = (file & S_IROTH) ? 'r' : '-';
+        rwx[8] = (file & S_IWOTH) ? 'w' : '-';
+        rwx[9] = (file & S_IXOTH) ? 'x' : '-';
+        rwx[10] = '\0';
+        struct passwd *user = getpwuid(filestat[i].st_uid);
+        struct group *gro = getgrgid(filestat[i].st_gid);
+        time_t mod_time = filestat[i].st_mtime;
+        struct tm *tt = localtime(&mod_time);
+        char ctime[100];
+        strftime(ctime, sizeof(ctime), "%m月 %d %H:%M", tt);
+        oss << std::left << std::setw(11) << rwx << " "
+            << std::setw(2) << filestat[i].st_nlink << " "
+            << std::left << std::setw(8) << (user ? user->pw_name : "unknown") << " "
+            << std::left << std::setw(8) << (gro ? gro->gr_name : "unknown") << " "
+            << std::setw(5) << filestat[i].st_size << " "
+            << ctime << " "
+            << s[i].name << "\n";
+        //printf("%-s %2ld %-s %-s %5ld %s %s\n", rwx, filestat[i].st_nlink, user->pw_name, gro->gr_name, filestat[i].st_size, ctime,s[i].name);
+    }
+    listmes=oss.str();
+    Send(data_fd,const_cast<char *>(listmes.c_str()),listmes.size(),0);
 }
 
 void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
-    int data_fd=accept(client->listen_fd,nullptr,nullptr);
+    struct sockaddr_in clmes;
+    socklen_t len=sizeof(clmes);
+    int data_fd=accept(client->listen_fd,(struct sockaddr*)&clmes,&len);
     if(data_fd<0){
         perror("accept data connection");
         return;
@@ -247,66 +311,70 @@ void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
         if (sent < 0) break;
     }
     std::cout<<"文件上传完毕"<<std::endl;
-    // char buf[4096];
-    // memset(buf,'\0',sizeof(buf));
-    // while(size_t n=fread(buf,sizeof(buf),1,fp)){ //每次读取sizeof(buf)个元素，大小为1字节，返回读取元素的个数，直到读取的元素个数为1为止
-    //     send(data_fd,buf,n,0);
-    // }
     fclose(fp);
     shutdown(client->data_fd,SHUT_RDWR);
     close(data_fd);
     client->data_fd=-1;
 }
 
-void deal_STOR_data(std::shared_ptr<client_data> client,std::string filename){
+void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
+    // 1. 发送150响应
+    std::string response = "150 Opening data connection\r\n";
+    Send(client->client_fd, const_cast<char*>(response.c_str()), response.size(), 0);
+
+    // 2. 接受数据连接（确保非阻塞模式正确处理）
+    int data_fd = -1;
     struct sockaddr_in clmes;
-    clmes.sin_family=AF_INET;
-    clmes.sin_port=htons(mes_travel_port);
-    if(inet_pton(AF_INET,client->server_ip.c_str(),&clmes.sin_addr)<0){
-        std::cout<<"inet_pton fail"<<std::endl;
-        return;
+    socklen_t len = sizeof(clmes);
+    while (true) {
+        data_fd = accept(client->listen_fd, (struct sockaddr*)&clmes, &len);
+        if (data_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 非阻塞模式下无连接，稍后重试
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            } else {
+                perror("accept error");
+                return;
+            }
+        } else {
+            break;
+        }
     }
-    socklen_t len=sizeof(clmes);
-    int data_fd=accept(client->listen_fd,(struct sockaddr*)&clmes,&len);
-    if(data_fd<0){
-        perror("accept data connection");
-        return;
-    }
-    client->data_fd=data_fd;
-    FILE *fp=fopen(filename.c_str(),"wb");
-    if(fp==nullptr){
-        std::cout<<"file open fail "<<std::endl;
+    client->data_fd = data_fd;
+
+    // 3. 接收文件数据
+    FILE* fp = fopen(filename.c_str(), "wb");
+    if (!fp) {
+        perror("fopen failed");
         close(data_fd);
-        client->data_fd=-1;
         return;
     }
+
     char buf[4096];
-    memset(buf,'\0',sizeof(buf));
-    std::cout<<"开始接收文件"<<std::endl;
     ssize_t total = 0;
-    
     while (true) {
         ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
         if (n > 0) {
             fwrite(buf, 1, n, fp);
             total += n;
-        } else if (n == 0) { // 连接正常关闭
-            break;
-        } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            continue; // 非阻塞模式下数据未就绪，继续等待
-        } else { // 其他错误
+        } else if (n == 0) {
+            break; // 连接关闭
+        } else if (errno == EAGAIN) {
+            continue; // 非阻塞模式下重试
+        } else {
             perror("recv error");
             break;
         }
     }
-    // while(size_t n=recv(data_fd,buf,sizeof(buf),0)){
-    //     fwrite(buf,1,n,fp);
-    // }
-    std::cout<<"文件接收完毕,大小为"<<total<<"字节"<<std::endl;
+    std::cout<<"文件接收完毕"<<std::endl;
+    // 4. 发送226响应表示传输完成
+    response = "226 Transfer complete\r\n";
+    Send(client->client_fd, const_cast<char*>(response.c_str()), response.size(), 0);
+
     fclose(fp);
-    shutdown(client->data_fd,SHUT_RDWR);
-    close(client->data_fd);
-    client->data_fd=-1;
+    close(data_fd);
+    client->data_fd = -1;
 }
 
 void clean_connect(int fd){
@@ -359,18 +427,6 @@ int Recv(int fd,char *buf,int len,int flag){
                 return -1;
             }
         }
-        // int temp=recv(fd,buf+reallen,len-reallen,flag);
-        // if(temp<0){
-        //     //数据接收异常
-        //     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-        //         return reallen; // 非阻塞模式下数据未就绪，直接返回已接收长度
-        //     }
-        //     error_report("recv",fd);
-        // }else if(temp==0){
-        //     //数据已全部接受完毕
-        //     break;
-        // }
-        // reallen+=temp;
     }
     return reallen;
 }

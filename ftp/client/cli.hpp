@@ -28,6 +28,7 @@ int connect_init();
 void start_PASV_mode(int fd,std::string first_m);
 void get_ip_port(std::string ser_mesage);
 void deal_willsend_message(int fd,char m[1024]);
+void deal_list_data(int control_fd);
 void deal_send_message(int fd,std::string m);
 void deal_get_file(std::string filename,int fd);
 void deal_up_file(std::string filename,int fd);
