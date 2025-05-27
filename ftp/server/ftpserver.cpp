@@ -24,28 +24,22 @@ int main(){
         for(int i=0;i<readyf;i++){
             struct sockaddr_in client_mes;
             if(events[i].data.fd==server_fd){ //处理
-                std::cout<<"1"<<std::endl;
                 deal_new_connect(server_fd,epoll_fd);
             }else if(events[i].events&EPOLLIN){ //接受消息
-                std::cout<<"2"<<std::endl;
                 deal_client_data(events[i].data.fd);
             }else if(events[i].events&(EPOLLERR|EPOLLHUP)){
-                std::cout<<"3"<<std::endl;
                 clean_connect(events[i].data.fd);
             }
         }
     }
-
     for(auto&[fd,client]:client_message){
         clean_connect(fd);
     }
-
     shutdown(server_fd,SHUT_RDWR);
     close(server_fd);
     close(epoll_fd);
     return 0;
 }
-
 
 void error_report(const std::string &x,int fd){
     std::cout<<x<<" start fail"<<std::endl;
@@ -60,18 +54,14 @@ int connect_init(){
     ser.sin_family=AF_INET;
     ser.sin_port=htons(first_port);
     ser.sin_addr.s_addr=htonl(INADDR_ANY);
-
     int bind_fd=bind(fd,(struct sockaddr*)&ser,sizeof(ser));
-
     if(bind_fd<0){
         error_report("bind",fd);
     }
-
     int listen_fd=listen(fd,10);
     if(listen_fd<0){
         error_report("listen",fd);
     }
-    
     return fd;
 }
 
@@ -84,13 +74,11 @@ void deal_new_connect(int ser_fd,int epoll_fd){
             if (errno == EAGAIN || errno == EWOULDBLOCK) break;
             else error_report("accept", client_fd);
         }
-
         // 获取服务端本地IP地址
         struct sockaddr_in server_side_addr;
         socklen_t addr_len = sizeof(server_side_addr);
         getsockname(client_fd, (struct sockaddr*)&server_side_addr, &addr_len);
         std::string server_ip = inet_ntoa(server_side_addr.sin_addr);
-
         std::string client_ip = inet_ntoa(client_mes.sin_addr);
         auto client = std::make_shared<client_data>(client_fd, client_ip);
         client->server_ip = server_ip; 
@@ -152,7 +140,6 @@ void deal_pasv_data(int client_fd){
     
     auto client = client_message[client_fd];
     std::string server_ip = client->server_ip; // 使用保存的服务端IP
-    std::cout<<"server_ip="<<server_ip<<std::endl;
     //创建监听套接字
     int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (listen_fd < 0) {
@@ -179,7 +166,6 @@ void deal_pasv_data(int client_fd){
     socklen_t addrlen=sizeof(addr);
     getsockname(listen_fd,(struct sockaddr*)&addr,&addrlen);
     mes_travel_port=ntohs(addr.sin_port);
-    std::cout<<"travel port="<<mes_travel_port<<std::endl;
     if (listen(listen_fd, 1) < 0) {
         perror("listen");
         close(listen_fd);
@@ -187,7 +173,6 @@ void deal_pasv_data(int client_fd){
     }
     client->listen_fd = listen_fd;
     
-
     std::vector<std::string> call_mes;
     std::istringstream iss(server_ip);
     std::string part;
@@ -221,8 +206,7 @@ void deal_list_data(int data_fd){
 };
     const char *dir_path = "/home/aln/桌面/Internet/ftp/server/";
     DIR *dirr = opendir(dir_path);
-    if (dirr == NULL)
-    {
+    if (dirr == NULL){
         perror("fail open dir");
         return;
     }
@@ -232,8 +216,7 @@ void deal_list_data(int data_fd){
     struct dirent *r;
     struct stat filestat[1024];
     struct store s[1024];
-    while ((r = readdir(dirr)) != NULL)
-    {
+    while ((r = readdir(dirr)) != NULL){
         if (r->d_name[0] == '.')
         {
             continue;
@@ -280,22 +263,43 @@ void deal_list_data(int data_fd){
             << std::setw(5) << filestat[i].st_size << " "
             << ctime << " "
             << s[i].name << "\n";
-        //printf("%-s %2ld %-s %-s %5ld %s %s\n", rwx, filestat[i].st_nlink, user->pw_name, gro->gr_name, filestat[i].st_size, ctime,s[i].name);
     }
     listmes=oss.str();
     Send(data_fd,const_cast<char *>(listmes.c_str()),listmes.size(),0);
+    closedir(dirr);
 }
 
 void deal_RETR_data(std::shared_ptr<client_data> client,std::string filename){
+    std::string response = "150 Opening data connection\r\n";
+    Send(client->client_fd, const_cast<char*>(response.c_str()), response.size(), 0);
     struct sockaddr_in clmes;
     socklen_t len=sizeof(clmes);
-    int data_fd=accept(client->listen_fd,(struct sockaddr*)&clmes,&len);
+    int data_fd=-1;
+    while (true) {
+        data_fd = accept(client->listen_fd, (struct sockaddr*)&clmes, &len);
+        if (data_fd < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // 非阻塞模式下无连接，稍后重试
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                continue;
+            } else {
+                perror("accept error");
+                return;
+            }
+        } else {
+            break;
+        }
+    }
     if(data_fd<0){
         perror("accept data connection");
         return;
     }
     client->data_fd=data_fd;
-    FILE *fp=fopen(filename.c_str(),"rb");
+    char c[1024];
+    getcwd(c,sizeof(c));
+    std::string x=(std::string)c+"/"+filename;
+    std::cout<<x<<std::endl;
+    FILE *fp=fopen(x.c_str(),"rb");
     if(fp==nullptr){
         std::cout<<"file open fail "<<std::endl;
         close(data_fd);
@@ -321,7 +325,6 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
     // 1. 发送150响应
     std::string response = "150 Opening data connection\r\n";
     Send(client->client_fd, const_cast<char*>(response.c_str()), response.size(), 0);
-
     // 2. 接受数据连接（确保非阻塞模式正确处理）
     int data_fd = -1;
     struct sockaddr_in clmes;
@@ -368,10 +371,6 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
         }
     }
     std::cout<<"文件接收完毕"<<std::endl;
-    // 4. 发送226响应表示传输完成
-    response = "226 Transfer complete\r\n";
-    Send(client->client_fd, const_cast<char*>(response.c_str()), response.size(), 0);
-
     fclose(fp);
     close(data_fd);
     client->data_fd = -1;

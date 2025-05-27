@@ -37,7 +37,6 @@ class client_data{
 const int first_port=2100;
 int mes_travel_port=5100;
 const int maxevents=100;
-const int filebuf_size=4096;
 
 int connect_init();
 void error_report(const std::string &x,int fd); //´íÎó´¦Àí
