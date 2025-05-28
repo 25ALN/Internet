@@ -359,10 +359,9 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
         close(data_fd);
         return;
     }
-
-    char buf[1024];
     ssize_t total = 0;
     while (true) {
+        char buf[10000];
         ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
         if (n > 0) {
             fwrite(buf, 1, n, fp);
@@ -375,7 +374,6 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
             perror("recv error");
             break;
         }
-        
     }
     std::cout<<"文件接收完毕"<<std::endl;
     fclose(fp);
