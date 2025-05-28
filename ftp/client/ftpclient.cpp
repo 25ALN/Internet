@@ -273,12 +273,12 @@ void deal_up_file(std::string filename, int control_fd)
         return;
     }
 
-    // 使用select等待连接完成
+    //使用select等待连接完成
     fd_set writefds;
     FD_ZERO(&writefds);
     FD_SET(data_fd, &writefds);
     struct timeval timeout;
-    timeout.tv_sec = 1;
+    timeout.tv_sec = 3;
     timeout.tv_usec = 0;
     int sel_ret = select(data_fd + 1, NULL, &writefds, NULL, &timeout);
     if (sel_ret <= 0)
@@ -287,31 +287,32 @@ void deal_up_file(std::string filename, int control_fd)
         close(data_fd);
         return;
     }
-
     // 2. 发送文件数据
     FILE *fp = fopen(filename.c_str(), "rb");
-    if (!fp)
+    if (fp==nullptr)
     {
         perror("fopen failed");
         close(data_fd);
         return;
     }
-    char buf[4096];
-    size_t bytes_read;
+    char buf[10000];
+    size_t bytes_read=0;
     std::cout<<"开始上传文件"<<std::endl;
     while ((bytes_read = fread(buf, 1, sizeof(buf), fp)) > 0){
         size_t alreay_send=0;
         while(alreay_send<bytes_read){
-            ssize_t sent = send(data_fd, buf, bytes_read, 0);
+            ssize_t sent = send(data_fd, buf+alreay_send,bytes_read-alreay_send, 0);
             if(sent>0){
                 alreay_send+=sent;
             }else if(sent < 0){
-                if(errno==EAGAIN||errno==EWOULDBLOCK){
+                if(errno==EAGAIN){
                     continue;
                 }else{
                     perror("send error");
                     break;
                 }
+            }else if(sent==0){
+                break;
             }
         }
         if(alreay_send<bytes_read){
