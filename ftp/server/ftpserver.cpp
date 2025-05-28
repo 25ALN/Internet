@@ -199,12 +199,17 @@ void deal_pasv_data(int client_fd){
 void deal_list_data(int data_fd){
     std::string listmes;
     std::ostringstream oss;
-    struct store
-{
+    struct store{
     char name[1024];
     long time;
-};
-    const char *dir_path = "/home/aln/桌面/Internet/ftp/server/";
+    };
+    char c[1024];
+    getcwd(c,sizeof(c));
+    char *dir_path=new char[1024];
+    strncpy(dir_path,c,1023);
+    const char *a="/";
+    strncat(dir_path,a,1);
+    dir_path[1023]='\0';
     DIR *dirr = opendir(dir_path);
     if (dirr == NULL){
         perror("fail open dir");
@@ -266,6 +271,7 @@ void deal_list_data(int data_fd){
     }
     listmes=oss.str();
     Send(data_fd,const_cast<char *>(listmes.c_str()),listmes.size(),0);
+    delete []dir_path;
     closedir(dirr);
 }
 
@@ -354,7 +360,7 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
         return;
     }
 
-    char buf[4096];
+    char buf[1024];
     ssize_t total = 0;
     while (true) {
         ssize_t n = recv(data_fd, buf, sizeof(buf), 0);
@@ -369,6 +375,7 @@ void deal_STOR_data(std::shared_ptr<client_data> client, std::string filename) {
             perror("recv error");
             break;
         }
+        
     }
     std::cout<<"文件接收完毕"<<std::endl;
     fclose(fp);

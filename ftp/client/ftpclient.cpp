@@ -296,16 +296,25 @@ void deal_up_file(std::string filename, int control_fd)
         close(data_fd);
         return;
     }
-
     char buf[4096];
     size_t bytes_read;
     std::cout<<"开始上传文件"<<std::endl;
-    while ((bytes_read = fread(buf, 1, sizeof(buf), fp)) > 0)
-    {
-        ssize_t sent = send(data_fd, buf, bytes_read, 0);
-        if (sent < 0)
-        {
-            perror("send error");
+    while ((bytes_read = fread(buf, 1, sizeof(buf), fp)) > 0){
+        size_t alreay_send=0;
+        while(alreay_send<bytes_read){
+            ssize_t sent = send(data_fd, buf, bytes_read, 0);
+            if(sent>0){
+                alreay_send+=sent;
+            }else if(sent < 0){
+                if(errno==EAGAIN||errno==EWOULDBLOCK){
+                    continue;
+                }else{
+                    perror("send error");
+                    break;
+                }
+            }
+        }
+        if(alreay_send<bytes_read){
             break;
         }
     }

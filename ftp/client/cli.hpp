@@ -8,6 +8,7 @@
 #include <sys/epoll.h>
 #include <thread>
 #include <vector>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <sys/socket.h>
 #include <unistd.h>
