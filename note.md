@@ -148,6 +148,8 @@ lsof -i:端口号
 kill -数字 端口号
 一般设置 -9 这样可强制关闭某个端口
 
+# 广播  
+假设你在 192.168.42.0/24 子网中的设备向 192.168.42.255 发送数据包，所有在该子网中的设备（即拥有 192.168.42.x 地址的设备）都会接收到该数据包，因为广播地址是专门用来广播消息给同一子网内的所有设备的。
 
 # 零拷贝文件传输
 这种传输方式可以提高传输的效率，减少很多不必要的拷贝次数
@@ -155,8 +157,30 @@ kill -数字 端口号
 1. sendfile()
 
 # redis
-在使用数据库时，编译要加上g++ new.cpp -o new -lhiredis
+在使用数据库时，编译要加上g++ new.cpp -o new -lhiredis  
 若使用哈希SHA256进行加密，编译时加上 -lcrypto
+- 常用命令  
+
+| Redis 命令                  | 说明       |
+| ------------------------- | -------- |
+| `SET key value`           | 设置字符串值   |
+| `GET key`                 | 获取字符串值   |
+| `APPEND key value`        | 追加值      |
+| `INCR key` / `DECR key`   | 自增/自减    |
+| `SETEX key seconds value` | 带过期时间的设置 |   
+| `HSET hash field value` | 设置字段值  |
+| `HGET hash field`       | 获取字段值  |
+| `HGETALL hash`          | 获取全部字段 |
+| `HDEL hash field`       | 删除字段   |  
+| `LPUSH key value`       | 左插入    |
+| `RPUSH key value`       | 右插入    |
+| `LPOP key` / `RPOP key` | 弹出     |
+| `LRANGE key start stop` | 获取列表范围 |
+| `SADD key member`      | 添加元素   |
+| `SISMEMBER key member` | 是否存在   |
+| `SMEMBERS key`         | 获取全部成员 |
+| `SREM key member`      | 移除元素   |
+
 
 # 网络常见错误
 1.未进行循环处理
