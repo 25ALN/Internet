@@ -29,7 +29,18 @@
 
 1. **4 次数据拷贝**：
 
-   * 2 次 DMA 拷贝（设备↔内核）
+   * 2 次 DMA 拷贝（设备↔内核，不可避免的）  
+   因为设备（如网卡、磁盘）无法直接处理高层内存结构，它必须通过 DMA 从系统内存中传输数据    
+
+| 原因                             | 说明                                                                 |
+| -------------------------------- | -------------------------------------------------------------------- |
+| 设备只能操作物理地址             | DMA 控制器通过物理地址访问系统内存，不理解虚拟地址或高层数据结构             |
+| CPU 不再拷贝，但数据仍需移动     | 数据必须从内存搬运到设备缓冲区，谁来搬都不重要，搬这一步是必须的               |
+| 内存到网卡是物理传输             | 网络数据最终要从内存走 PCIe 总线 → 网卡 → 网络线                             |
+| 零拷贝目标是减少 CPU 拷贝，而不是“彻底不拷贝” | DMA 仍然是**一次**“不可避免”的底层拷贝                                     |
+
+
+
    * 2 次 CPU 拷贝（内核↔用户空间）
 2. **4 次上下文切换**：  
 
@@ -192,18 +203,21 @@ while (offset < file_stat.st_size) {
 
 * 内核直接从文件发送到 socket
 * 1 次 CPU 拷贝，2 次切换
-* 无法修改数据
+* 无法修改数据  
+- 局限性    
+1. 不支持的文件类型  
 
-#### 2.2.3 sendfile + DMA gather copy
+| 文件类型                       | 说明                                           |
+| -------------------------- | -------------------------------------------- |
+| **管道（pipe/FIFO）**          | 不能直接用于管道文件描述符，因为管道是流式设备，没有随机访问能力。            |
+| **字符设备（character device）** | 例如 `/dev/null`、终端设备，设备特殊，无法使用 `sendfile` 传输。 |
+| **块设备（block device）**      | 例如硬盘设备本身，不支持直接使用 `sendfile`。                 |
+| **套接字（socket）**            | 不能作为 `in_fd`（源文件）使用，因为套接字不是普通文件。             |
+| **符号链接（symbolic link）**    | 符号链接本身不是文件内容，无法直接传输。                         |
 
-```c
-sendfile(socket_fd, file_fd, len);
-```
 
-* 使用 DMA gather 避免 socket 缓冲区拷贝
-* 0 次 CPU 拷贝（需硬件支持）
 
-#### 2.2.4 splice
+#### 2.2.3 splice
 
 ```c
 splice(fd_in, off_in, fd_out, off_out, len, flags);
@@ -211,38 +225,36 @@ splice(fd_in, off_in, fd_out, off_out, len, flags);
 相比与sendfile使用起来更复杂一点需要搭配pipe进行使用，逻辑更为复杂一点，  
 但他又比sendfile能发送的文件更多，支持任意两个支持的文件描述符
 * 建立内核空间数据通道
-* 0 次 CPU 拷贝
+* 0 次 CPU 拷贝，4次切换  
+
+#### 2.2.4 sendfile + DMA gather copy
+
+网卡再利用 DMA Scatter-Gather 功能把文件数据 + 协议头（如 TCP/HTTP 头）一次性从多个内存块中收集发送，实现真正意义上的“零拷贝”发送  
+无需 CPU 参与拷贝整个 buffer，避免数据合并、拼接、拷贝等开销  
+```cpp  
+// 设置 TCP_CORK：推迟发送，等待数据聚合
+setsockopt(socket_fd, IPPROTO_TCP, TCP_CORK, &on, sizeof(on));
+
+// write header，但不立即发出
+write(socket_fd, http_header, header_len);
+
+// 发送 file 内容
+sendfile(socket_fd, file_fd, &offset, file_size);
+
+// 关闭 CORK，发出完整包
+setsockopt(socket_fd, IPPROTO_TCP, TCP_CORK, &off, sizeof(off));
+```  
+TCP_CORK 是一个非常有用的 TCP 优化机制，它通过推迟数据的发送，将多个小的数据块合并成一个较大的 TCP 包，  
+从而优化网络带宽的使用、减少包的数量和提升吞吐量
+
+* 使用 DMA gather 避免 socket 缓冲区拷贝
+* 0 次 CPU 拷贝（需硬件支持），2次切换
 
 ---
 
 ## 三、零拷贝技术在 C/C++ 中的应用 
 
-### 3.1 常用系统调用示例
-
-#### mmap()
-
-```cpp
-void* addr = mmap(...);
-if (addr == MAP_FAILED) {
-    perror("mmap failed");
-    // 处理错误
-}
-```
-
-#### sendfile()
-
-```cpp
-sendfile(socket_fd, file_fd, NULL, file_size);
-```
-
-#### splice()
-
-```cpp
-splice(fd_in, NULL, pipefd[1], NULL, 4096, SPLICE_F_MOVE);
-splice(pipefd[0], NULL, fd_out, NULL, 4096, SPLICE_F_MOVE);
-```
-
-### 3.2 应用场景与最佳实践
+### 3.1 应用场景与最佳实践
 
 #### 适用场景
 
@@ -268,7 +280,7 @@ splice(pipefd[0], NULL, fd_out, NULL, 4096, SPLICE_F_MOVE);
 * **避免小文件**：mmap 不适合过小文件
 * **缓存管理**：调整页缓存大小
 
-### 3.3 拷贝方式对比表
+### 3.2 拷贝方式对比表
 
 | 拷贝方式                  | CPU 拷贝 | DMA 拷贝 | 系统调用         | 上下文切换 | 特点               |
 | --------------------- | ------ | ------ | ------------ | ----- | ---------------- |
