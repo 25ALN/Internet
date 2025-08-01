@@ -1,0 +1,4 @@
+/home/aln/桌面/chatroom/build/CMakeFiles/chat_server.dir
+/home/aln/桌面/chatroom/build/CMakeFiles/chat_client.dir
+/home/aln/桌面/chatroom/build/CMakeFiles/edit_cache.dir
+/home/aln/桌面/chatroom/build/CMakeFiles/rebuild_cache.dir
