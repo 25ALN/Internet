@@ -1,0 +1,24 @@
+# 忽略所有编译生成的二进制文件
+*.exe
+*.o
+*.a
+*.so
+*.dll
+*.bin
+*.class
+*.jar
+*.pyc
+*.out
+
+# 忽略压缩包
+*.zip
+*.tar
+*.gz
+*.7z
+
+# 忽略图像（可选）
+*.png
+*.jpg
+*.jpeg
+*.gif
+
