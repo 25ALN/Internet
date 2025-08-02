@@ -448,7 +448,6 @@ void chatserver::deal_friends_part(int client_fd,std::string data){
     static std::string choose;
     std::string acout;
     if(data.find("identify")!=std::string::npos&&data.size()==17){
-        std::cout<<"ready check"<<std::endl;
         check_identify(client_fd,data);
         return;
     }
@@ -568,7 +567,6 @@ void chatserver::deal_friends_part(int client_fd,std::string data){
         return;
     }
     static std::string saveaccount;
-    std::cout<<"ready mark="<<mark<<std::endl;
     if(mark==1&&!data.empty()&&data.size()>1&&(data.find("同意")==std::string::npos)&&(data.find("拒绝")==std::string::npos)){
         saveaccount=data;
         mark=0;
@@ -587,12 +585,9 @@ void chatserver::deal_friends_part(int client_fd,std::string data){
         x.request.clear();
         return;
     }
-    std::cout<<"choose="<<choose<<std::endl;
-    std::cout<<"saveaccount="<<saveaccount<<std::endl;
     //如果没有此处每次传入的账号都是data
     if(x.if_begin_chat==1){
         chat_with_friends(client_fd,x.chat_with,data);
-        //chat_with_friends(client_fd,saveaccount,data);
     }
     if(x.if_begin_group_chat==1){
         groups_chat(client_fd);
@@ -635,8 +630,6 @@ void chatserver::groups(int client_fd){
         choose=client.group_message[0];
         client.group_message.erase(0,2);
     }
-    std::cout<<"group mes="<<client.group_message<<std::endl;
-    std::cout<<"group choose="<<choose<<std::endl;
     switch (choose[0]){
     case '1':
         create_groups(client_fd);
@@ -670,7 +663,6 @@ void chatserver::groups(int client_fd){
 }
 
 void chatserver::create_groups(int client_fd){
-    std::cout<<"enter create"<<std::endl;
     auto &client=clientm[client_fd];
     std::string group_number=client.group_message.substr(0,9);
     std::string key="group:"+group_number;
@@ -860,7 +852,6 @@ void chatserver::groups_chat(int client_fd){
     auto&client=clientm[client_fd];
     std::string message=client.group_message;
     std::string response;
-    std::cout<<"mes="<<message<<std::endl;
     std::string group_number;
     if(client.if_begin_group_chat==0){
         group_number=message.substr(0,9);
@@ -951,7 +942,6 @@ void chatserver::groups_chat(int client_fd){
     name+="]:";
     name.insert(0,"[");
     message.insert(0,name);
-    std::cout<<"message="<<message<<":end"<<std::endl;
     
     int n=sendto(groups_chatfd,message.c_str(),message.size(),0,(struct sockaddr*)&dbaddr,sizeof(dbaddr));
     
@@ -1623,8 +1613,12 @@ void chatserver::chat_with_friends(int client_fd,std::string account,std::string
                 freeReplyObject(r);
                 std::string pb_key=account+":hmd_account";
                 redisReply *pbcz=(redisReply *)redisCommand(conn,"SISMEMBER %s %s",pb_key.c_str(),client.cur_user.c_str());
+                std::string own_pb_key=client.cur_user+":hmd_account";
+                redisReply *ownhmd=(redisReply *)redisCommand(conn,"SISMEMBER %s %s",own_pb_key.c_str(),account.c_str());
                 if(pbcz->integer==1){
                     response="你已被该用户屏蔽";
+                }else if(ownhmd->integer==1){
+                    response="该用户已被你屏蔽";
                 }else{
                     int ensure_fd=-1;
                     for(auto&[fd,x]:clientm){
@@ -1641,6 +1635,7 @@ void chatserver::chat_with_friends(int client_fd,std::string account,std::string
                     client.if_begin_chat=1;
                 }
                 freeReplyObject(pbcz);
+                freeReplyObject(ownhmd);
             }
         }
     }else if(data.find("*c*")!=std::string::npos){
