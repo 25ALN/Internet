@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG -rdynamic CMakeFiles/chat_server.dir/src/server/server.cpp.o -o /home/aln/桌面/chatroom/bin/chat_server  -lhiredis 
